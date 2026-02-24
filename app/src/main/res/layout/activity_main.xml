@@ -24,112 +24,207 @@
             <FrameLayout
                 android:layout_width="0dp"
                 android:layout_height="match_parent"
-                android:layout_weight="60"
-                android:background="#FF000000">
+                android:layout_weight="64"
+                android:background="#FF111111"
+                android:padding="6dp">
 
-                <!-- 16:9 约束容器，让视频居中且不拉伸 -->
-                <androidx.constraintlayout.widget.ConstraintLayout
+                <!-- 视频画面（带圆角边框） -->
+                <FrameLayout
                     android:layout_width="match_parent"
                     android:layout_height="match_parent"
-                    android:layout_gravity="center">
+                    android:background="@drawable/video_frame_bg">
 
-                    <com.skydroid.fpvplayer.FPVWidget
-                        android:id="@+id/fpvWidget"
-                        android:layout_width="0dp"
-                        android:layout_height="0dp"
-                        android:background="#FF000000"
-                        app:layout_constraintTop_toTopOf="parent"
-                        app:layout_constraintBottom_toBottomOf="parent"
-                        app:layout_constraintStart_toStartOf="parent"
-                        app:layout_constraintEnd_toEndOf="parent"
-                        app:layout_constraintDimensionRatio="16:9"
-                        tools:ignore="ContentDescription" />
+                    <!-- 16:9 约束容器 -->
+                    <androidx.constraintlayout.widget.ConstraintLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:layout_margin="2dp">
 
-                </androidx.constraintlayout.widget.ConstraintLayout>
+                        <com.skydroid.fpvplayer.FPVWidget
+                            android:id="@+id/fpvWidget"
+                            android:layout_width="0dp"
+                            android:layout_height="0dp"
+                            android:background="#FF000000"
+                            app:layout_constraintBottom_toBottomOf="parent"
+                            app:layout_constraintDimensionRatio="16:9"
+                            app:layout_constraintEnd_toEndOf="parent"
+                            app:layout_constraintStart_toStartOf="parent"
+                            app:layout_constraintTop_toTopOf="parent"
+                            tools:ignore="ContentDescription" />
 
-                <!-- 顶部覆盖层：Logo + 状态标签 -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:paddingStart="14dp"
-                    android:paddingEnd="14dp"
-                    android:paddingTop="10dp"
-                    android:paddingBottom="8dp">
+                    </androidx.constraintlayout.widget.ConstraintLayout>
 
-                    <TextView
-                        android:layout_width="wrap_content"
+                    <!-- 顶部覆盖层：Logo + 状态标签 + 设置 -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="⚡ SMARTDIG"
-                        android:textColor="#FFD700"
-                        android:textSize="16sp"
-                        android:textStyle="bold" />
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:background="#CC111111"
+                        android:paddingStart="12dp"
+                        android:paddingEnd="8dp"
+                        android:paddingTop="6dp"
+                        android:paddingBottom="6dp">
 
-                    <View
-                        android:layout_width="0dp"
-                        android:layout_height="1dp"
-                        android:layout_weight="1" />
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Smart Excavator"
+                            android:textColor="#FFD700"
+                            android:textSize="14sp"
+                            android:textStyle="bold" />
 
-                    <TextView
-                        android:id="@+id/tvVideoLink"
-                        android:layout_width="wrap_content"
+                        <View
+                            android:layout_width="0dp"
+                            android:layout_height="1dp"
+                            android:layout_weight="1" />
+
+                        <TextView
+                            android:id="@+id/tvVideoLink"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="⏱ Delay: 46ms"
+                            android:textColor="#CCFFFFFF"
+                            android:textSize="10sp"
+                            android:background="@drawable/chip_bg"
+                            android:paddingStart="8dp"
+                            android:paddingEnd="8dp"
+                            android:paddingTop="4dp"
+                            android:paddingBottom="4dp"
+                            android:layout_marginEnd="6dp" />
+
+                        <TextView
+                            android:id="@+id/tvRcSignal"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="📶 Signal: 100%"
+                            android:textColor="#CCFFFFFF"
+                            android:textSize="10sp"
+                            android:background="@drawable/chip_bg"
+                            android:paddingStart="8dp"
+                            android:paddingEnd="8dp"
+                            android:paddingTop="4dp"
+                            android:paddingBottom="4dp"
+                            android:layout_marginEnd="6dp" />
+
+                        <TextView
+                            android:id="@+id/btnSettings"
+                            android:layout_width="28dp"
+                            android:layout_height="28dp"
+                            android:gravity="center"
+                            android:text="⚙"
+                            android:textSize="16sp"
+                            android:textColor="#CCFFFFFF"
+                            android:background="@drawable/chip_bg"
+                            android:clickable="true"
+                            android:focusable="true" />
+
+                    </LinearLayout>
+
+                    <!-- 底部覆盖层（LIVE 左下 + 摇杆右下） -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="⏱ Delay: 46ms"
-                        android:textColor="#FFFFFF"
-                        android:textSize="11sp"
-                        android:background="@drawable/chip_bg"
+                        android:layout_gravity="bottom"
+                        android:orientation="horizontal"
+                        android:gravity="bottom"
                         android:paddingStart="10dp"
                         android:paddingEnd="10dp"
-                        android:paddingTop="5dp"
-                        android:paddingBottom="5dp"
-                        android:layout_marginEnd="6dp" />
+                        android:paddingBottom="8dp">
 
-                    <TextView
-                        android:id="@+id/tvRcSignal"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="📶 Signal: 100%"
-                        android:textColor="#FFFFFF"
-                        android:textSize="11sp"
-                        android:background="@drawable/chip_bg"
-                        android:paddingStart="10dp"
-                        android:paddingEnd="10dp"
-                        android:paddingTop="5dp"
-                        android:paddingBottom="5dp"
-                        android:layout_marginEnd="6dp" />
+                        <!-- LIVE 指示器 -->
+                        <LinearLayout
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal"
+                            android:gravity="center_vertical"
+                            android:background="@drawable/chip_bg"
+                            android:paddingStart="10dp"
+                            android:paddingEnd="10dp"
+                            android:paddingTop="5dp"
+                            android:paddingBottom="5dp">
 
-                </LinearLayout>
+                            <View
+                                android:layout_width="8dp"
+                                android:layout_height="8dp"
+                                android:background="@drawable/green_dot"
+                                android:layout_marginEnd="6dp" />
 
-                <!-- 底部覆盖层：仅 LIVE 指示器 -->
-                <LinearLayout
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_gravity="bottom|start"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:background="@drawable/chip_bg"
-                    android:paddingStart="12dp"
-                    android:paddingEnd="12dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:layout_marginStart="14dp"
-                    android:layout_marginBottom="10dp">
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="LIVE"
+                                android:textColor="#FFFFFF"
+                                android:textSize="11sp"
+                                android:textStyle="bold" />
+                        </LinearLayout>
 
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="LIVE"
-                        android:textColor="#FFFFFF"
-                        android:textSize="12sp"
-                        android:textStyle="bold"
-                        android:layout_marginEnd="6dp" />
+                        <View
+                            android:layout_width="0dp"
+                            android:layout_height="1dp"
+                            android:layout_weight="1" />
 
-                    <View
-                        android:layout_width="9dp"
-                        android:layout_height="9dp"
-                        android:background="@drawable/green_dot" />
-                </LinearLayout>
+                        <!-- 摇杆示意图（右下角） -->
+                        <LinearLayout
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal"
+                            android:gravity="center_vertical"
+                            android:background="@drawable/chip_bg"
+                            android:paddingStart="10dp"
+                            android:paddingEnd="10dp"
+                            android:paddingTop="6dp"
+                            android:paddingBottom="4dp">
+
+                            <!-- 左摇杆 -->
+                            <LinearLayout
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:gravity="center_horizontal"
+                                android:orientation="vertical"
+                                android:layout_marginEnd="12dp">
+
+                                <com.example.myapplication.JoystickIndicatorView
+                                    android:id="@+id/joystickLeft"
+                                    android:layout_width="54dp"
+                                    android:layout_height="54dp" />
+
+                                <TextView
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="1dp"
+                                    android:text="L"
+                                    android:textColor="#99FFFFFF"
+                                    android:textSize="9sp"
+                                    android:textStyle="bold" />
+                            </LinearLayout>
+
+                            <!-- 右摇杆 -->
+                            <LinearLayout
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:gravity="center_horizontal"
+                                android:orientation="vertical">
+
+                                <com.example.myapplication.JoystickIndicatorView
+                                    android:id="@+id/joystickRight"
+                                    android:layout_width="54dp"
+                                    android:layout_height="54dp" />
+
+                                <TextView
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginTop="1dp"
+                                    android:text="R"
+                                    android:textColor="#99FFFFFF"
+                                    android:textSize="9sp"
+                                    android:textStyle="bold" />
+                            </LinearLayout>
+                        </LinearLayout>
+
+                    </LinearLayout>
+
+                </FrameLayout>
 
                 <!-- 视频地址编辑器（隐藏，保留功能） -->
                 <LinearLayout
@@ -173,10 +268,10 @@
             <LinearLayout
                 android:layout_width="0dp"
                 android:layout_height="match_parent"
-                android:layout_weight="40"
+                android:layout_weight="36"
                 android:orientation="vertical"
                 android:padding="8dp"
-                android:background="#FF1E1E1E">
+                android:background="#FF111111">
 
                 <!-- ===== 姿态可视化器（黄色边框） ===== -->
                 <LinearLayout
@@ -307,20 +402,12 @@
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="0dp"
-                    android:layout_weight="2.5"
+                    android:layout_weight="1.5"
                     android:orientation="vertical"
                     android:background="@drawable/card_dark_bg"
                     android:padding="4dp"
                     android:layout_marginBottom="6dp">
 
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="ANGLES"
-                        android:textColor="#FFFFFF"
-                        android:textSize="13sp"
-                        android:textStyle="bold"
-                        android:layout_marginBottom="2dp" />
 
                     <LinearLayout
                         android:layout_width="match_parent"
@@ -378,7 +465,7 @@
 
                 
                             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-                                android:text="DEPTH" android:textColor="#AAAAAA" android:textSize="9sp" />
+                                android:text="DEPTH" android:textColor="#AAAAAA" android:textSize="8sp" />
                         </LinearLayout>
 
                         <LinearLayout
@@ -394,7 +481,7 @@
                                 android:layout_weight="1"
                                 android:text="3.48 m"
                                 android:textColor="#FFD700"
-                                android:textSize="14sp"
+                                android:textSize="11sp"
                                 android:textStyle="bold" />
 
                             <!-- <ProgressBar
@@ -408,10 +495,6 @@
                                 android:rotation="270" /> -->
                         </LinearLayout>
                     </LinearLayout>
-
-
-
-
 
                     <!-- 速度 -->
                     <LinearLayout
@@ -435,10 +518,10 @@
                             android:layout_marginBottom="2dp">
 
                             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-                                android:text="SPEED" android:textColor="#AAAAAA" android:textSize="9sp" />
+                                android:text="SPEED" android:textColor="#AAAAAA" android:textSize="8sp" />
                         </LinearLayout>
                         <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-                            android:text="0.5 km/h" android:textColor="#FFFFFF" android:textSize="13sp" android:textStyle="bold" />
+                            android:text="0.5 km/h" android:textColor="#FFFFFF" android:textSize="11sp" android:textStyle="bold" />
                     </LinearLayout>
 
                     <!-- 电池 -->
@@ -464,10 +547,10 @@
                             android:layout_marginBottom="2dp">
         
                             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-                                android:text="BATTERY" android:textColor="#AAAAAA" android:textSize="9sp" />
+                                android:text="BATTERY" android:textColor="#AAAAAA" android:textSize="8sp" />
                         </LinearLayout>
                         <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-                            android:text="80% ⚡" android:textColor="#FFFFFF" android:textSize="13sp" android:textStyle="bold" />
+                            android:text="80% ⚡" android:textColor="#FFFFFF" android:textSize="11sp" android:textStyle="bold" />
                     </LinearLayout>
 
                     <!-- 连接状态 -->
@@ -492,10 +575,10 @@
                             android:layout_marginBottom="2dp">
       
                             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-                                android:text="CONNECTION" android:textColor="#AAAAAA" android:textSize="9sp" />
+                                android:text="CONNECTION" android:textColor="#AAAAAA" android:textSize="8sp" />
                         </LinearLayout>
                         <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-                            android:text="STABLE" android:textColor="#00FF00" android:textSize="13sp" android:textStyle="bold" />
+                            android:text="STABLE" android:textColor="#00FF00" android:textSize="11sp" android:textStyle="bold" />
                     </LinearLayout>
                 </LinearLayout>
 

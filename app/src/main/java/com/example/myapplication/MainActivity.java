@@ -125,6 +125,10 @@ public class MainActivity extends AppCompatActivity {
     private int ch2Value = 0; // 右摇杆上下
     private int ch3Value = 0; // 左摇杆上下
     private int ch4Value = 0; // 左摇杆左右
+
+    // 摇杆示意图
+    private JoystickIndicatorView joystickLeft;
+    private JoystickIndicatorView joystickRight;
     
     // 信号强度相关
     private KeyListener<Integer> keySignalQualityListener;
@@ -256,7 +260,21 @@ public class MainActivity extends AppCompatActivity {
         gaugeBoom = findViewById(R.id.gaugeBoom);
         gaugeStick = findViewById(R.id.gaugeStick);
         gaugeBucket = findViewById(R.id.gaugeBucket);
-        
+
+        // 摇杆示意图
+        joystickLeft = findViewById(R.id.joystickLeft);
+        joystickRight = findViewById(R.id.joystickRight);
+
+        // 设置按钮
+        View btnSettings = findViewById(R.id.btnSettings);
+        if (btnSettings != null) {
+            btnSettings.setOnClickListener(v -> {
+                Intent intent = new Intent(MainActivity.this, SettingsActivity.class);
+                intent.putExtra("current_url", currentVideoUrl);
+                startActivityForResult(intent, REQUEST_SETTINGS);
+            });
+        }
+
         // 设置仪表盘标签
         if (gaugeBoom != null) gaugeBoom.setLabel("BOOM:");
         if (gaugeStick != null) gaugeStick.setLabel("STICK:");
@@ -532,7 +550,7 @@ public class MainActivity extends AppCompatActivity {
         
         // 进度条（0-10米范围）
         int progress = (int) (depth * 100); // 转换为整数进度
-        // progressDigDepth.setProgress(progress);
+//        progressDigDepth.setProgress(progress);
     }
     
     /**
@@ -543,6 +561,7 @@ public class MainActivity extends AppCompatActivity {
             new CompletionCallbackWith<int[]>() {
                 @Override
                 public void onSuccess(int[] value) {
+                    // 区间【-450，450】
                     // value 是摇杆值数组
                     if (value != null && value.length >= 4) {
                         // 减去1500作为初始值
@@ -550,6 +569,12 @@ public class MainActivity extends AppCompatActivity {
                         ch2Value = value[1] - 1500; // 右摇杆上下
                         ch3Value = value[2] - 1500; // 左摇杆上下
                         ch4Value = value[3] - 1500; // 左摇杆左右
+
+                        // 更新摇杆示意图（切换回主线程绘制）
+                        runOnUiThread(() -> {
+                            if (joystickLeft != null) joystickLeft.setValues(ch4Value, ch3Value);
+                            if (joystickRight != null) joystickRight.setValues(ch1Value, -ch2Value);
+                        });
                     }
                 }
 
