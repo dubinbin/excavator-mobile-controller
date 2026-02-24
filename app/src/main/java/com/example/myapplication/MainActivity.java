@@ -4,6 +4,7 @@ import android.app.AlertDialog;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.graphics.Color;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -36,9 +37,10 @@ import com.skydroid.rcsdk.common.callback.KeyListener;
 import com.skydroid.rcsdk.common.callback.CompletionCallbackWith;
 
 import com.skydroid.fpvplayer.FPVWidget;
+import com.skydroid.fpvplayer.OnPlayerStateListener;
 import com.skydroid.fpvplayer.PlayerType;
+import com.skydroid.fpvplayer.ReConnectInterceptor;
 import com.skydroid.fpvplayer.RtspTransport;
-import com.skydroid.fpvplayer.*;
 import android.widget.RelativeLayout;
 
 import org.maplibre.android.MapLibre;
@@ -72,6 +74,11 @@ public class MainActivity extends AppCompatActivity {
     private ExcavatorPostureView excavatorPostureView;
     private FPVWidget fpvWidget;
     private MapView mapView;
+
+    // 视频连接状态 UI
+    private View liveIndicatorDot;
+    private TextView tvLiveStatus;
+    private TextView btnReconnect;
     
     // 角度仪表盘
     private AngleGaugeView gaugeBoom;
@@ -265,6 +272,14 @@ public class MainActivity extends AppCompatActivity {
         joystickLeft = findViewById(R.id.joystickLeft);
         joystickRight = findViewById(R.id.joystickRight);
 
+        // 视频连接状态 UI
+        liveIndicatorDot = findViewById(R.id.liveIndicatorDot);
+        tvLiveStatus = findViewById(R.id.tvLiveStatus);
+        btnReconnect = findViewById(R.id.btnReconnect);
+        if (btnReconnect != null) {
+            btnReconnect.setOnClickListener(v -> reconnectVideo());
+        }
+
         // 设置按钮
         View btnSettings = findViewById(R.id.btnSettings);
         if (btnSettings != null) {
@@ -340,22 +355,55 @@ public class MainActivity extends AppCompatActivity {
      * 初始化视频播放器
      */
     private void initVideoPlayer() {
-        if (fpvWidget != null) {
-            // 使用硬解码
-            fpvWidget.setUsingMediaCodec(true);
+        if (fpvWidget == null) return;
 
-            // 设置RTSP地址
-            fpvWidget.setUrl(currentVideoUrl);
-            
-            // 使用云卓播放器
-            fpvWidget.setPlayerType(PlayerType.ONLY_SKY);
-            
-            // RTSP流TCP/UDP连接方式（自动选择）
-            fpvWidget.setRtspTranstype(RtspTransport.AUTO);
-            
-            // 开始播放
-            fpvWidget.start();
+        fpvWidget.setUsingMediaCodec(true);
+        fpvWidget.setUrl(currentVideoUrl);
+        fpvWidget.setPlayerType(PlayerType.ONLY_SKY);
+        fpvWidget.setRtspTranstype(RtspTransport.AUTO);
+
+        // 禁止自动重连：连接失败后不再自动重试
+        fpvWidget.setReConnectInterceptor(() -> false);
+
+        // 监听连接状态，更新 LIVE 指示器
+        fpvWidget.setOnPlayerStateListener(new OnPlayerStateListener() {
+            @Override
+            public void onConnected() {
+                runOnUiThread(() -> setVideoConnected(true));
+            }
+
+            @Override
+            public void onDisconnect() {
+                runOnUiThread(() -> setVideoConnected(false));
+            }
+
+            @Override
+            public void onReadFrame(com.skydroid.fpvplayer.ffmpeg.FrameInfo frameInfo) {
+            }
+        });
+
+        fpvWidget.start();
+    }
+
+    private void setVideoConnected(boolean connected) {
+        if (tvLiveStatus != null) {
+            tvLiveStatus.setText(connected ? "LIVE" : "OFFLINE");
+            tvLiveStatus.setTextColor(connected ? Color.WHITE : Color.parseColor("#FF6B6B"));
         }
+        if (liveIndicatorDot != null) {
+            GradientDrawable dot = new GradientDrawable();
+            dot.setShape(GradientDrawable.OVAL);
+            dot.setColor(connected ? Color.parseColor("#00E676") : Color.parseColor("#FF6B6B"));
+            liveIndicatorDot.setBackground(dot);
+        }
+    }
+
+    private void reconnectVideo() {
+        if (fpvWidget == null) return;
+        fpvWidget.stop();
+        fpvWidget.setUrl(currentVideoUrl);
+        fpvWidget.start();
+        Toast.makeText(this, "正在重新连接...", Toast.LENGTH_SHORT).show();
     }
     
     /**
