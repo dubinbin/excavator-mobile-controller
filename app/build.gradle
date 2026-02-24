@@ -1,0 +1,54 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    // AGP 8+ 要求在 build.gradle 中显式声明 namespace，对应 AndroidManifest.xml 的 package
+    namespace 'com.example.myapplication'
+    // 升级到较新的 Android SDK（Android 14 / API 34）
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.example.myapplication'
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName '1.0'
+
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+    compileOptions {
+        // 保持 Java 8 语法级别，JDK 可以使用 11/17 甚至更高
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.4.0'
+    implementation 'com.google.android.material:material:1.5.0'
+    implementation 'androidx.activity:activity:1.4.0'
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.0'
+    // RCSDK依赖
+    implementation files('libs/rcsdk-v1.8.4.aar')
+    
+    // FPVPlayer 相关依赖
+    implementation files('libs/fpvplayer-v3.3.7.aar')
+    implementation files('libs/sky-ijkplayer-v1.1.aar')
+    implementation files('libs/isoparser-1.1.9.jar')
+    // Kotlin 标准库（FPVWidget 是 Kotlin 类，需要运行时支持）
+    implementation 'org.jetbrains.kotlin:kotlin-stdlib:1.8.0'
+    // MapLibre GL Native for Android
+    implementation 'org.maplibre.gl:android-sdk:11.8.0'
+    testImplementation 'junit:junit:4.13.2'
+    androidTestImplementation 'androidx.test.ext:junit:1.1.5'
+    androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'
+}
+

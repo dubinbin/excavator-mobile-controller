@@ -1,0 +1,39 @@
+<resources>
+    <string name="app_name">SmartExcavator RC</string>
+    
+    <!-- 状态栏 -->
+    <string name="title_smartdig">SMARTDIG</string>
+    <string name="system_nominal">SYSTEM NOMINAL</string>
+    <string name="video_link">VIDEO LINK</string>
+    <string name="rc_signal">RC SIGNAL</string>
+    <string name="battery">BAT</string>
+    <string name="dig_depth">DIG DEPTH</string>
+    
+    <!-- 面板标题 -->
+    <string name="machine_status">MACHINE STATUS</string>
+    <string name="posture_visualizer">POSTURE VISUALIZER</string>
+    <string name="positioning">POSITIONING</string>
+    
+    <!-- 机器状态 -->
+    <string name="engine_rpm">Engine RPM:</string>
+    <string name="hydraulics">Hydraulics:</string>
+    <string name="fuel_level">Fuel Level:</string>
+    <string name="coolant">Coolant:</string>
+    
+    <!-- 角度标签 -->
+    <string name="boom">BOOM:</string>
+    <string name="stick">STICK:</string>
+    <string name="bucket">BUCKET:</string>
+    
+    <!-- 定位 -->
+    <string name="latitude">LAT:</string>
+    <string name="longitude">LNG:</string>
+    <string name="hours">HOURS:</string>
+    
+    <!-- 按钮 -->
+    <string name="lights">Lights</string>
+    <string name="horn">Horn</string>
+    <string name="man_mode">Manual Mode</string>
+    <string name="home">Home</string>
+    <string name="stop">Stop</string>
+</resources>

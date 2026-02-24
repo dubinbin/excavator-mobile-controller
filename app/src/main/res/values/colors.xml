@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+    
+    <!-- SmartDig 主题颜色 -->
+    <color name="primary_dark">#FF1A1A1A</color>
+    <color name="panel_background">#FF1E1E1E</color>
+    <color name="card_background">#FF2A2A2A</color>
+    <color name="text_primary">#FFFFFFFF</color>
+    <color name="text_secondary">#CCAAAAAA</color>
+    <color name="accent_gold">#FFFFD700</color>
+    <color name="status_green">#FF00C853</color>
+    <color name="status_blue">#FF00AAFF</color>
+    <color name="status_orange">#FFFF8800</color>
+    <color name="chip_bg">#99000000</color>
+    <color name="excavator_gray">#FF888888</color>
+    <color name="excavator_orange">#FFFFA500</color>
+</resources>
