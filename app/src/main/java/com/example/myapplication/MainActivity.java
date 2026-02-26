@@ -79,6 +79,7 @@ public class MainActivity extends AppCompatActivity {
     private View liveIndicatorDot;
     private TextView tvLiveStatus;
     private TextView btnReconnect;
+    private View videoPlaceholder;
     
     // 角度仪表盘
     private AngleGaugeView gaugeBoom;
@@ -247,8 +248,6 @@ public class MainActivity extends AppCompatActivity {
         tvBoomAngle = findViewById(R.id.tvBoomAngle);
         tvStickAngle = findViewById(R.id.tvStickAngle);
         tvBucketAngle = findViewById(R.id.tvBucketAngle);
-        tvLatitude = findViewById(R.id.tvLatitude);
-        tvLongitude = findViewById(R.id.tvLongitude);
         tvDigDepth = findViewById(R.id.tvDigDepth);
         tvVideoLink = findViewById(R.id.tvVideoLink);
         tvRcSignal = findViewById(R.id.tvRcSignal);
@@ -276,9 +275,12 @@ public class MainActivity extends AppCompatActivity {
         liveIndicatorDot = findViewById(R.id.liveIndicatorDot);
         tvLiveStatus = findViewById(R.id.tvLiveStatus);
         btnReconnect = findViewById(R.id.btnReconnect);
+        videoPlaceholder = findViewById(R.id.videoPlaceholder);
         if (btnReconnect != null) {
             btnReconnect.setOnClickListener(v -> reconnectVideo());
         }
+        // 初始状态设为未连接，等播放器回调后再更新
+        setVideoConnected(false);
 
         // 设置按钮
         View btnSettings = findViewById(R.id.btnSettings);
@@ -309,7 +311,7 @@ public class MainActivity extends AppCompatActivity {
 
             String darkStyleJson = "{\"version\":8,\"name\":\"Dark\",\"sources\":{},"
                     + "\"layers\":[{\"id\":\"background\",\"type\":\"background\","
-                    + "\"paint\":{\"background-color\":\"#1E1E2E\"}}]}";
+                    + "\"paint\":{\"background-color\":\"rgba(0,0,0,0)\"}}]}";
 
             mapLibreMap.setStyle(new Style.Builder().fromJson(darkStyleJson), style -> {
                 double lat = 22.4269593;
@@ -395,6 +397,9 @@ public class MainActivity extends AppCompatActivity {
             dot.setShape(GradientDrawable.OVAL);
             dot.setColor(connected ? Color.parseColor("#00E676") : Color.parseColor("#FF6B6B"));
             liveIndicatorDot.setBackground(dot);
+        }
+        if (videoPlaceholder != null) {
+            videoPlaceholder.setVisibility(connected ? View.GONE : View.VISIBLE);
         }
     }
 
@@ -586,9 +591,7 @@ public class MainActivity extends AppCompatActivity {
         // 经纬度在小范围内波动
         double lat = 22.4269593;
         double lng = 114.2089099;
-        
-        tvLatitude.setText(String.format(Locale.getDefault(), "LAT: %.6f N", lat));
-        tvLongitude.setText(String.format(Locale.getDefault(), "LNG: %.6f E", lng));
+
     }
     
     private void updateDigDepth() {
