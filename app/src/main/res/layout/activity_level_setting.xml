@@ -429,13 +429,11 @@
                             android:layout_width="0dp"
                             android:layout_height="36dp"
                             android:layout_weight="3"
-                            android:clickable="true"
-                            android:focusable="true"
                             android:gravity="center_vertical|end"
                             android:paddingStart="8dp"
                             android:paddingEnd="8dp"
-                            android:text="暂无RTK"
-                            android:textColor="#FF111827"
+                            android:text="--"
+                            android:textColor="#FF9CA3AF"
                             android:textSize="14sp" />
                     </LinearLayout>
                     <!-- 目标坐标 X -->

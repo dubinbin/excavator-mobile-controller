@@ -7,25 +7,21 @@ import android.util.Log;
 import androidx.annotation.Nullable;
 
 /**
- * 找平任务 TCU 协议流程（imu.txt §6.2）。
+ * 挖沟任务 TCU 协议流程（imu.txt §6.3）。
  * <p>
- * 流程：0x04 进入找平 → 0x10 测点 → 本地算目标高 → 0x11 下发参数 → 0x40 任务确认。
- * 组包/解析见 {@link TcuBusinessCodec}，发送见 {@link TcuLinkHub}。
+ * 0x04 进入挖沟 → 0x10 测 A/B → 本地算 A'/B' → 0x20 整包参数 → 0x40 任务确认。
  */
-public final class LevelTcuWorkflow implements TcuLinkHub.BusinessFrameListener {
+public final class DitchTcuWorkflow implements TcuLinkHub.BusinessFrameListener {
 
-    private static final String TAG = "LevelTcuWorkflow";
+    private static final String TAG = "DitchTcuWorkflow";
     private static final long REQUEST_TIMEOUT_MS = 8000L;
 
     public enum Phase {
         IDLE,
-        /** 0x84 ActiveFeature=找平 */
         FEATURE_ACTIVE,
-        /** 0x90 测点成功 */
-        SURVEY_DONE,
-        /** 0x91 参数已确认 */
+        SURVEY_A_DONE,
+        SURVEY_B_DONE,
         PARAMS_ACCEPTED,
-        /** 0xC0 TaskState=已激活 */
         TASK_ACTIVE
     }
 
@@ -39,12 +35,11 @@ public final class LevelTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
         void onSurveyResult(double heightM, double lat, double lon);
     }
 
-    /** 0x90 已写入 {@link LevelTaskState} 时通知 UI（不依赖 pending callback 是否仍在）。 */
     public interface SurveyStoredListener {
-        void onSurveyStored(double heightM, double lat, double lon);
+        void onSurveyStored(int pointId, double heightM, double lat, double lon);
     }
 
-    private static final LevelTcuWorkflow INSTANCE = new LevelTcuWorkflow();
+    private static final DitchTcuWorkflow INSTANCE = new DitchTcuWorkflow();
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
@@ -53,6 +48,7 @@ public final class LevelTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
 
     private Phase phase = Phase.IDLE;
     private int pendingExpectAck = -1;
+    private int pendingSurveyPointId = -1;
     @Nullable
     private StepCallback pendingCallback;
     @Nullable
@@ -60,11 +56,11 @@ public final class LevelTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
     @Nullable
     private Runnable pendingTimeout;
 
-    private LevelTcuWorkflow() {
+    private DitchTcuWorkflow() {
         TcuLinkHub.addListener(this);
     }
 
-    public static LevelTcuWorkflow getInstance() {
+    public static DitchTcuWorkflow getInstance() {
         return INSTANCE;
     }
 
@@ -80,94 +76,89 @@ public final class LevelTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
         return phase != Phase.IDLE;
     }
 
-    /** 进入找平功能（0x04 Feature=找平 Action=进入）。 */
     public void enterFeature(StepCallback callback) {
         if (!ensureLink(callback)) {
             return;
         }
         sendAndWait(TcuBusinessCodec.MSG_FEATURE_SELECT_ACK,
                 TcuBusinessCodec.buildFeatureSelect(
-                        TcuBusinessCodec.FEATURE_LEVEL,
+                        TcuBusinessCodec.FEATURE_DITCH,
                         TcuBusinessCodec.ACTION_ENTER),
                 callback);
     }
 
-    /** 通用测点（0x10），{@code pointMode} 与 {@link LevelTaskState#REF_LEFT} 等一致。 */
-    public void requestSurvey(int pointMode, SurveyCallback callback) {
+    public void requestSurveyA(int pointMode, SurveyCallback callback) {
+        requestSurvey(TcuBusinessCodec.POINT_A, pointMode, callback);
+    }
+
+    public void requestSurveyB(int pointMode, SurveyCallback callback) {
+        requestSurvey(TcuBusinessCodec.POINT_B, pointMode, callback);
+    }
+
+    private void requestSurvey(int pointId, int pointMode, SurveyCallback callback) {
         if (!ensureLink(callback)) {
             return;
         }
         if (phase == Phase.IDLE) {
-            fail(callback, "请先进入找平功能");
+            fail(callback, "请先进入挖沟功能");
             return;
         }
-        int mode = normalizePointMode(pointMode);
-        pendingSurveyCallback = callback;
-        sendAndWait(TcuBusinessCodec.MSG_SURVEY_RESULT,
+        // 必须在 send 之前写好 pointId / surveyCallback：sendAndWait 内会 clearPending，
+        // 且 0x90 若很快返回，不能在「仍以为是 A」或 surveyCallback 已被清掉时处理 B。
+        sendAndWaitSurvey(
+                TcuBusinessCodec.MSG_SURVEY_RESULT,
                 TcuBusinessCodec.buildSurveyRequest(
-                        TcuBusinessCodec.FEATURE_LEVEL,
-                        TcuBusinessCodec.POINT_REF,
-                        mode),
+                        TcuBusinessCodec.FEATURE_DITCH,
+                        pointId,
+                        normalizePointMode(pointMode)),
+                pointId,
                 callback);
     }
 
-    /**
-     * 下发找平目标高度（0x11）。
-     * 高度定点：TargetHeight = 测点高度(0x90) + 填挖量。
-     * 坐标定点：TargetHeight = 用户设计高程(tvCoordZ)；仍需先完成参考点测点(0x10/0x90)。
-     */
-    public void submitLevelParams(StepCallback callback) {
+    /** 挖沟参数整包下发（0x20），依据 {@link DitchTaskState} 中 A'/B' 与侧向参数。 */
+    public void submitDitchParams(StepCallback callback) {
         if (!ensureLink(callback)) {
             return;
         }
-        if (phase.ordinal() < Phase.SURVEY_DONE.ordinal()) {
-            fail(callback, "请先完成参考点测点");
+        if (!DitchTaskState.canSubmitDitchParams()) {
+            fail(callback, "请完成 A/B 点设置与沟深宽度参数");
             return;
         }
-        if (!LevelTaskState.hasSurveyHeight()) {
-            fail(callback, "缺少测点高度，请重新测点");
+        DitchTaskState.PrimePoint a = DitchTaskState.computePrimeA();
+        DitchTaskState.PrimePoint b = DitchTaskState.computePrimeB();
+        if (a == null || b == null) {
+            fail(callback, "无法计算 A'/B' 建模点");
             return;
         }
-        int targetTenthCm;
-        if (LevelTaskState.isHeightMode()) {
-            double fillOffsetM = LevelTaskState.getTargetHeightM();
-            if (Double.isNaN(fillOffsetM)) {
-                fail(callback, "请填写填挖量");
-                return;
-            }
-            targetTenthCm = LevelTaskState.getSurveyHeightTenthCm()
-                    + TcuBusinessCodec.metersToTenthCm(fillOffsetM);
-        } else {
-            double designM = LevelTaskState.getTargetZM();
-            if (Double.isNaN(designM)) {
-                fail(callback, "请填写设计高程");
-                return;
-            }
-            targetTenthCm = TcuBusinessCodec.metersToTenthCm(designM);
-        }
-        LevelTaskState.setPendingTargetHeightTenthCm(targetTenthCm);
-        sendAndWait(TcuBusinessCodec.MSG_LEVEL_PARAMS_ACK,
-                TcuBusinessCodec.buildLevelParams(targetTenthCm),
-                callback);
+        int depth = TcuBusinessCodec.metersToTenthCm(parseMetersOrFail(DitchTaskState.getSideParam3()));
+        int left = TcuBusinessCodec.metersToTenthCm(parseMetersOrFail(DitchTaskState.getSideParam1()));
+        int right = TcuBusinessCodec.metersToTenthCm(parseMetersOrFail(DitchTaskState.getSideParam4()));
+        int top = DitchTaskState.isSquareDitch()
+                ? 0
+                : TcuBusinessCodec.metersToTenthCm(parseMetersOrFail(DitchTaskState.getSideParam2()));
+        byte[] frame = TcuBusinessCodec.buildDitchParams(
+                DitchTaskState.getDitchType(),
+                a.lat, a.lon, TcuBusinessCodec.metersToTenthCm(a.heightM),
+                b.lat, b.lon, TcuBusinessCodec.metersToTenthCm(b.heightM),
+                depth, left, right, top);
+        sendAndWait(TcuBusinessCodec.MSG_DITCH_PARAMS_ACK, frame, callback);
     }
 
-    /** 任务确认开始（0x40 Action=确认）。 */
     public void confirmTaskStart(StepCallback callback) {
         if (!ensureLink(callback)) {
             return;
         }
         if (phase.ordinal() < Phase.PARAMS_ACCEPTED.ordinal()) {
-            fail(callback, "请先完成找平参数下发");
+            fail(callback, "请先完成挖沟参数下发");
             return;
         }
         sendAndWait(TcuBusinessCodec.MSG_TASK_CONFIRM_ACK,
                 TcuBusinessCodec.buildTaskConfirm(
-                        TcuBusinessCodec.FEATURE_LEVEL,
+                        TcuBusinessCodec.FEATURE_DITCH,
                         TcuBusinessCodec.ACTION_ENTER),
                 callback);
     }
 
-    /** 退出找平功能（0x04 Action=退出）。 */
     public void exitFeature(@Nullable StepCallback callback) {
         if (!TcuLinkHub.isConnected()) {
             resetLocal();
@@ -176,7 +167,7 @@ public final class LevelTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
         }
         sendAndWait(TcuBusinessCodec.MSG_FEATURE_SELECT_ACK,
                 TcuBusinessCodec.buildFeatureSelect(
-                        TcuBusinessCodec.FEATURE_LEVEL,
+                        TcuBusinessCodec.FEATURE_DITCH,
                         TcuBusinessCodec.ACTION_EXIT),
                 new StepCallback() {
                     @Override
@@ -198,10 +189,9 @@ public final class LevelTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
     public void resetLocal() {
         clearPending();
         phase = Phase.IDLE;
-        LevelTaskState.clearTcuSession();
+        DitchTaskState.clearTcuSession();
     }
 
-    /** 用户离开页面时取消等待中的请求，避免 UI 一直卡在 busy。 */
     public void cancelPending() {
         clearPending();
     }
@@ -216,8 +206,8 @@ public final class LevelTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
                 return handleFeatureSelectAck(frame.data);
             case TcuBusinessCodec.MSG_SURVEY_RESULT:
                 return handleSurveyResult(frame.data);
-            case TcuBusinessCodec.MSG_LEVEL_PARAMS_ACK:
-                return handleLevelParamsAck(frame.data);
+            case TcuBusinessCodec.MSG_DITCH_PARAMS_ACK:
+                return handleDitchParamsAck(frame.data);
             case TcuBusinessCodec.MSG_TASK_CONFIRM_ACK:
                 return handleTaskConfirmAck(frame.data);
             default:
@@ -229,8 +219,7 @@ public final class LevelTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
         if (!isPending(TcuBusinessCodec.MSG_FEATURE_SELECT_ACK) || data == null || data.length < 3) {
             return false;
         }
-        // data[1]=请求 FeatureID 回显；避免挖沟/找平互相吞掉对方的 0x84
-        if ((data[1] & 0xFF) != TcuBusinessCodec.FEATURE_LEVEL) {
+        if ((data[1] & 0xFF) != TcuBusinessCodec.FEATURE_DITCH) {
             return false;
         }
         clearPendingTimeout();
@@ -240,7 +229,7 @@ public final class LevelTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
             failPending(TcuBusinessCodec.resultMessage(result));
             return true;
         }
-        if (activeFeature == TcuBusinessCodec.FEATURE_LEVEL) {
+        if (activeFeature == TcuBusinessCodec.FEATURE_DITCH) {
             phase = Phase.FEATURE_ACTIVE;
             succeedPending();
         } else if (activeFeature == TcuBusinessCodec.FEATURE_NONE) {
@@ -256,8 +245,13 @@ public final class LevelTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
         if (!isPending(TcuBusinessCodec.MSG_SURVEY_RESULT) || data == null || data.length < 18) {
             return false;
         }
-        // 与挖沟共用 MsgID=0x90：仅处理找平上下文，避免误消费挖沟应答导致挖沟侧一直等超时
-        if ((data[1] & 0xFF) != TcuBusinessCodec.FEATURE_LEVEL) {
+        // 与找平共用 MsgID=0x90：仅处理挖沟上下文，避免误消费找平应答导致本侧一直等超时
+        if ((data[1] & 0xFF) != TcuBusinessCodec.FEATURE_DITCH) {
+            return false;
+        }
+        int expectedPoint = pendingSurveyPointId;
+        if ((data[2] & 0xFF) != expectedPoint) {
+            // A 点延迟 0x90 在已发 B 测点之后到达：不当作 B 的应答，避免错状态/假超时
             return false;
         }
         clearPendingTimeout();
@@ -266,27 +260,38 @@ public final class LevelTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
             failPendingSurvey(TcuBusinessCodec.resultMessage(result));
             return true;
         }
+
         int heightTenthCm = TcuBusinessCodec.readInt32Be(data, 4);
         double lat = TcuBusinessCodec.parseInt40LatLon(data, 8);
         double lon = TcuBusinessCodec.parseInt40LatLon(data, 13);
         double heightM = TcuBusinessCodec.tenthCmToMeters(heightTenthCm);
-        LevelTaskState.updateSurveyResult(heightTenthCm, lat, lon);
-        phase = Phase.SURVEY_DONE;
-        notifySurveyStored(heightM, lat, lon);
+        int pointId = expectedPoint;
+        if (pointId == TcuBusinessCodec.POINT_A) {
+            DitchTaskState.updateSurveyA(heightTenthCm, lat, lon);
+            phase = Phase.SURVEY_A_DONE;
+        } else if (pointId == TcuBusinessCodec.POINT_B) {
+            DitchTaskState.updateSurveyB(heightTenthCm, lat, lon);
+            phase = Phase.SURVEY_B_DONE;
+        } else {
+            failPendingSurvey("测点应答 PointID 异常: 0x" + Integer.toHexString(pointId));
+            return true;
+        }
+        pendingSurveyPointId = -1;
+        notifySurveyStored(pointId, heightM, lat, lon);
         succeedPendingSurvey(heightM, lat, lon);
         return true;
     }
 
-    private void notifySurveyStored(double heightM, double lat, double lon) {
+    private void notifySurveyStored(int pointId, double heightM, double lat, double lon) {
         SurveyStoredListener listener = surveyStoredListener;
         if (listener == null) {
             return;
         }
-        mainHandler.post(() -> listener.onSurveyStored(heightM, lat, lon));
+        mainHandler.post(() -> listener.onSurveyStored(pointId, heightM, lat, lon));
     }
 
-    private boolean handleLevelParamsAck(byte[] data) {
-        if (!isPending(TcuBusinessCodec.MSG_LEVEL_PARAMS_ACK) || data == null || data.length < 5) {
+    private boolean handleDitchParamsAck(byte[] data) {
+        if (!isPending(TcuBusinessCodec.MSG_DITCH_PARAMS_ACK) || data == null || data.length < 2) {
             return false;
         }
         clearPendingTimeout();
@@ -295,8 +300,7 @@ public final class LevelTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
             failPending(TcuBusinessCodec.resultMessage(result));
             return true;
         }
-        int acceptedTenthCm = TcuBusinessCodec.readInt32Be(data, 1);
-        LevelTaskState.setAcceptedTargetHeightTenthCm(acceptedTenthCm);
+        DitchTaskState.setTcuParamsAccepted(true);
         phase = Phase.PARAMS_ACCEPTED;
         succeedPending();
         return true;
@@ -306,7 +310,7 @@ public final class LevelTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
         if (!isPending(TcuBusinessCodec.MSG_TASK_CONFIRM_ACK) || data == null || data.length < 3) {
             return false;
         }
-        if ((data[1] & 0xFF) != TcuBusinessCodec.FEATURE_LEVEL) {
+        if ((data[1] & 0xFF) != TcuBusinessCodec.FEATURE_DITCH) {
             return false;
         }
         clearPendingTimeout();
@@ -316,7 +320,7 @@ public final class LevelTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
             failPending("任务未激活: " + TcuBusinessCodec.resultMessage(result));
             return true;
         }
-        LevelTaskState.setTcuTaskActive(true);
+        DitchTaskState.setTcuTaskActive(true);
         phase = Phase.TASK_ACTIVE;
         succeedPending();
         return true;
@@ -324,6 +328,31 @@ public final class LevelTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
 
     private void sendAndWait(int expectAckMsgId, byte[] frame, StepCallback callback) {
         clearPending();
+        pendingExpectAck = expectAckMsgId;
+        pendingCallback = callback;
+        if (!TcuLinkHub.send(frame)) {
+            clearPending();
+            fail(callback, "发送失败，请检查接收机连接");
+            return;
+        }
+        pendingTimeout = () -> {
+            if (isPending(expectAckMsgId)) {
+                clearPending();
+                fail(callback, "等待 TCU 应答超时");
+            }
+        };
+        mainHandler.postDelayed(pendingTimeout, REQUEST_TIMEOUT_MS);
+    }
+
+    /**
+     * 测点 0x10/0x90：{@link #sendAndWait} 会先 {@link #clearPending()} 清掉 surveyCallback，
+     * 且旧代码在 send 之后才写 {@code pendingSurveyPointId}，B 点更容易与极快返回的 0x90 竞态导致卡住/丢回调。
+     */
+    private void sendAndWaitSurvey(
+            int expectAckMsgId, byte[] frame, int pointId, SurveyCallback callback) {
+        clearPending();
+        pendingSurveyPointId = pointId;
+        pendingSurveyCallback = callback;
         pendingExpectAck = expectAckMsgId;
         pendingCallback = callback;
         if (!TcuLinkHub.send(frame)) {
@@ -367,10 +396,15 @@ public final class LevelTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
     }
 
     private static int normalizePointMode(int pointMode) {
-        if (pointMode < LevelTaskState.REF_LEFT || pointMode > LevelTaskState.REF_RIGHT) {
-            return LevelTaskState.REF_MIDDLE;
+        if (pointMode < DitchTaskState.REF_LEFT || pointMode > DitchTaskState.REF_RIGHT) {
+            return DitchTaskState.REF_MIDDLE;
         }
         return pointMode;
+    }
+
+    private static double parseMetersOrFail(String text) {
+        Double v = DitchTaskState.parseMeters(text);
+        return v == null || Double.isNaN(v) ? 0.0 : v;
     }
 
     private void succeedPending() {
@@ -403,6 +437,7 @@ public final class LevelTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
         SurveyCallback cb = pendingSurveyCallback;
         pendingCallback = null;
         pendingSurveyCallback = null;
+        pendingSurveyPointId = -1;
         fail(cb, message);
     }
 

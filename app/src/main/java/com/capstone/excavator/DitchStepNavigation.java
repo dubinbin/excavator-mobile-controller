@@ -175,6 +175,8 @@ public final class DitchStepNavigation {
     public static void bindBackToMain(@Nullable View backButton, Activity activity) {
         if (backButton == null || activity == null) return;
         backButton.setOnClickListener(v -> {
+            DitchTcuWorkflow.getInstance().cancelPending();
+            DitchTcuWorkflow.getInstance().resetLocal();
             DitchTaskState.reset();
             if (activity instanceof ScaledAppCompatActivity) {
                 ((ScaledAppCompatActivity) activity).navigateToMain();

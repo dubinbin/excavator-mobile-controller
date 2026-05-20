@@ -18,6 +18,7 @@ public final class LevelTaskState {
 
     private static volatile double targetHeightM = Double.NaN;
     private static volatile double fillCutM = Double.NaN;
+    private static volatile double targetZM = Double.NaN;
 
     // ── TCU 找平会话（0x90 / 0x91 / 0xC0）────────────────────────────
     private static volatile int surveyHeightTenthCm = Integer.MIN_VALUE;
@@ -42,6 +43,7 @@ public final class LevelTaskState {
 
         targetHeightM = parseMeters(targetHeight);
         fillCutM = parseMeters(fillCut);
+        targetZM = parseMeters(targetZ);
     }
 
     public static void updateSurveyResult(int heightTenthCm, double lat, double lon) {
@@ -81,6 +83,7 @@ public final class LevelTaskState {
         targetZ = "";
         targetHeightM = Double.NaN;
         fillCutM = Double.NaN;
+        targetZM = Double.NaN;
         clearTcuSession();
     }
 
@@ -136,14 +139,48 @@ public final class LevelTaskState {
         return fillCutM;
     }
 
+    /** 坐标定点：用户输入的设计高程（米），对应 tvCoordZ。 */
+    public static double getTargetZM() {
+        return targetZM;
+    }
+
     /** @deprecated 设计高程请用 {@link #getDesignElevationM()}；TCU 偏移请用 {@link #getTargetHeightM()}（填挖量）。 */
     public static double getReferenceSumM() {
         return getDesignElevationM();
     }
 
-    /** 高度定点：至少已填「填挖量」；设计高程由 UI 自动 = 测量值 + 填挖量。 */
+    /** 高度定点：至少已填「填挖量」且已完成测点；设计高程由 UI 自动 = 测量值 + 填挖量。 */
     public static boolean hasNumericValues() {
-        return !Double.isNaN(targetHeightM) && hasSurveyHeight();
+        return heightMode && !Double.isNaN(targetHeightM) && hasSurveyHeight();
+    }
+
+    /** 坐标定点：用户已填目标经度、纬度、设计高程（非默认占位 0）。 */
+    public static boolean hasCoordNumericValues() {
+        if (heightMode) {
+            return false;
+        }
+        return isFilledNumeric(targetLon)
+                && isFilledNumeric(targetLat)
+                && isFilledNumeric(targetZ);
+    }
+
+    private static boolean isFilledNumeric(String value) {
+        if (!isUserEntered(value)) {
+            return false;
+        }
+        return !Double.isNaN(parseMeters(value));
+    }
+
+    private static boolean isUserEntered(String value) {
+        if (value == null) {
+            return false;
+        }
+        String s = value.trim();
+        return !s.isEmpty() && !"--".equals(s) && !"0".equals(s);
+    }
+
+    public static boolean canProceedToPrecheck() {
+        return hasNumericValues() || hasCoordNumericValues();
     }
 
     /** 设计高程（米）= 填挖量 + 测量值，与 UI tvFillCut 一致。 */
@@ -192,6 +229,22 @@ public final class LevelTaskState {
             return "--";
         }
         return String.format(Locale.US, "%.3f", getAcceptedTargetHeightM());
+    }
+
+    /**
+     * 预检/作业展示用设计高程文案。
+     * 高度定点：tvFillCut（测量值+填挖量）；坐标定点：tvCoordZ；已下发 0x11 则用 TCU 确认值。
+     */
+    public static String getDesignElevationDisplayText() {
+        if (hasAcceptedTargetHeight()) {
+            return getAcceptedTargetHeightText();
+        }
+        if (heightMode) {
+            String v = getFillCut();
+            return v == null || v.trim().isEmpty() ? "--" : v.trim();
+        }
+        String v = getTargetZ();
+        return v == null || v.trim().isEmpty() ? "--" : v.trim();
     }
 
     public static boolean isTcuTaskActive() {

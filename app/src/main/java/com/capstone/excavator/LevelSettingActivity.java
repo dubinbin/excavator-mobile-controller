@@ -50,7 +50,8 @@ public class LevelSettingActivity extends ScaledAppCompatActivity {
     // - tvTargetHeight「填挖量」F：用户输入
     // - tvFillCut「设计高程」：自动 = F + M（只读联动）
     // - 下发 0x11：TargetHeight = M + F = 设计高程
-    // 坐标定点：经纬度/高度来自同一次 0x90，目标字段可再编辑
+    // 坐标定点：用户输入目标经度(tvCoordX)、纬度(tvCoordY)、设计高程(tvCoordZ)；
+    // tvCurrentLatLon 只读展示「纬度, 经度」组合，不来自 0x90
 
     // ── 其他控件 ─────────────────────────────────────────────
     private View btnLevelBack, btnLevelNext;
@@ -84,18 +85,14 @@ public class LevelSettingActivity extends ScaledAppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
-        refreshSurveyLatLonDisplay();
-        refreshSurveyMeasurementDisplay();
-        syncCoordTargetsFromSurveyIfEmpty();
-        refreshDerivedViews();
+        refreshUiForCurrentMode();
     }
 
     @Override
     protected void onStart() {
         super.onStart();
         LevelTcuWorkflow.setSurveyStoredListener(this::onSurveyStoredFromTcu);
-        refreshSurveyLatLonDisplay();
-        refreshSurveyMeasurementDisplay();
+        refreshUiForCurrentMode();
     }
 
     @Override
@@ -112,36 +109,37 @@ public class LevelSettingActivity extends ScaledAppCompatActivity {
         if (hasFocus) setFullScreenMode();
     }
 
-    /**
-     * §6.2：找平参考点经纬度来自 TCU 测点应答 0x90，不是 0xFA 实时 RTK 流。
-     */
-    private void refreshSurveyLatLonDisplay() {
-        applySurveyLatLon(
-                LevelTaskState.getSurveyLat(),
-                LevelTaskState.getSurveyLon(),
-                LevelTaskState.hasSurveyHeight());
+    private void refreshUiForCurrentMode() {
+        if (isHeightMode) {
+            refreshSurveyMeasurementDisplay();
+            refreshDerivedViews();
+        } else {
+            refreshCoordLatLonSummary();
+        }
     }
 
-    private void applySurveyLatLon(double lat, double lon, boolean hasSurvey) {
+    /**
+     * 坐标定点：当前经纬度 = 用户输入的目标纬度 + 目标经度（只读汇总行）。
+     */
+    private void refreshCoordLatLonSummary() {
         if (tvCurrentLatLon == null) {
             return;
         }
-        if (hasSurvey && RtkState.isValidCoordinate(lat, lon)) {
+        Double lat = parseDoubleOrNull(tvCoordY == null ? null : tvCoordY.getText());
+        Double lon = parseDoubleOrNull(tvCoordX == null ? null : tvCoordX.getText());
+        if (lat != null && lon != null) {
             tvCurrentLatLon.setText(String.format(Locale.US, "%.9f, %.9f", lat, lon));
-            return;
-        }
-        if (workflowBusy && !hasSurvey) {
-            tvCurrentLatLon.setText("测点中…");
         } else {
-            tvCurrentLatLon.setText("待测点");
+            tvCurrentLatLon.setText("--");
         }
     }
 
-    /** 0x90 测点高度 → 高度定点「测量值」；经纬度 → 坐标定点各字段。 */
+    /** 0x90 测点结果仅更新高度定点「测量值」，不写入坐标定点输入框。 */
     private void applySurveyResultToUi(double heightM, double lat, double lon) {
         refreshSurveyMeasurementDisplay();
-        applySurveyToCoordTargets(heightM, lat, lon);
-        refreshDerivedViews();
+        if (isHeightMode) {
+            refreshDerivedViews();
+        }
     }
 
     /** §6.2：测量值 = 当前斗尖测点高度（0x90 Height），不被填挖量/设计高程覆盖。 */
@@ -160,65 +158,6 @@ public class LevelSettingActivity extends ScaledAppCompatActivity {
         } else {
             tvCurrentRef.setText("--");
         }
-    }
-
-    /** 0x90 测点结果 → 坐标定点：目标经度 / 目标纬度 / 目标高度(m)。 */
-    private void applySurveyToCoordTargets(double heightM, double lat, double lon) {
-        applySurveyLatLon(lat, lon, true);
-        if (RtkState.isValidCoordinate(lat, lon)) {
-            if (tvCoordX != null) {
-                tvCoordX.setText(formatCoordValue(lon));
-            }
-            if (tvCoordY != null) {
-                tvCoordY.setText(formatCoordValue(lat));
-            }
-        }
-        if (!Double.isNaN(heightM) && tvCoordZ != null) {
-            tvCoordZ.setText(formatMetersValue(heightM));
-        }
-        cacheState();
-    }
-
-    private void syncCoordTargetsFromSurveyIfEmpty() {
-        if (!LevelTaskState.hasSurveyHeight()) {
-            return;
-        }
-        double lat = LevelTaskState.getSurveyLat();
-        double lon = LevelTaskState.getSurveyLon();
-        double heightM = LevelTaskState.getSurveyHeightM();
-        if (RtkState.isValidCoordinate(lat, lon)) {
-            if (isUnsetCoordField(tvCoordX, LevelTaskState.getTargetLon())) {
-                if (tvCoordX != null) {
-                    tvCoordX.setText(formatCoordValue(lon));
-                }
-            }
-            if (isUnsetCoordField(tvCoordY, LevelTaskState.getTargetLat())) {
-                if (tvCoordY != null) {
-                    tvCoordY.setText(formatCoordValue(lat));
-                }
-            }
-        }
-        if (isUnsetCoordField(tvCoordZ, LevelTaskState.getTargetZ())) {
-            if (tvCoordZ != null) {
-                tvCoordZ.setText(formatMetersValue(heightM));
-            }
-        }
-        cacheState();
-    }
-
-    private static boolean isUnsetCoordField(@Nullable TextView field, String stored) {
-        if (stored != null && !stored.isEmpty() && !"0".equals(stored.trim()) && !"--".equals(stored.trim())) {
-            return false;
-        }
-        if (field == null) {
-            return true;
-        }
-        CharSequence text = field.getText();
-        if (text == null) {
-            return true;
-        }
-        String s = text.toString().trim();
-        return s.isEmpty() || "0".equals(s) || "--".equals(s) || "待测点".equals(s) || "测点中…".equals(s);
     }
 
     private void onSurveyStoredFromTcu(double heightM, double lat, double lon) {
@@ -299,10 +238,7 @@ public class LevelSettingActivity extends ScaledAppCompatActivity {
         if (tvCoordZ != null && !LevelTaskState.getTargetZ().isEmpty()) {
             tvCoordZ.setText(LevelTaskState.getTargetZ());
         }
-        refreshSurveyLatLonDisplay();
-        refreshSurveyMeasurementDisplay();
-        syncCoordTargetsFromSurveyIfEmpty();
-        refreshDerivedViews();
+        refreshUiForCurrentMode();
     }
 
     // ── 参考点卡片 ────────────────────────────────────────────
@@ -318,6 +254,9 @@ public class LevelSettingActivity extends ScaledAppCompatActivity {
         selectedRef = index;
         applyRefSelection();
         cacheState();
+        if (!isHeightMode) {
+            return;
+        }
         refreshSurveyMeasurementDisplay();
         requestSurveyForSelectedRef();
     }
@@ -364,30 +303,25 @@ public class LevelSettingActivity extends ScaledAppCompatActivity {
 
     private void setupModeToggle() {
         btnModeHeight.setOnClickListener(v -> switchToHeightFixedPoint());
-        btnModeCoord.setOnClickListener(v -> switchToRtkFixedPoint());
+        btnModeCoord.setOnClickListener(v -> switchToCoordFixedPoint());
         applyModeSelection();
     }
 
-    /** 高度定点：仅切换 UI，不重复测点。 */
+    /** 高度定点：切换 UI；测点仍由选斗尖触发。 */
     private void switchToHeightFixedPoint() {
         setMode(true);
     }
 
-    /**
-     * 坐标定点：切换面板后按当前斗尖再发一次 0x10 测点，用 0x90 刷新经纬度/高度。
-     */
-    private void switchToRtkFixedPoint() {
+    /** 坐标定点：仅切换 UI，经纬度高程由用户输入，不自动测点。 */
+    private void switchToCoordFixedPoint() {
         setMode(false);
-        requestSurveyForSelectedRef();
     }
 
     private void setMode(boolean heightMode) {
         isHeightMode = heightMode;
         applyModeSelection();
         cacheState();
-        refreshSurveyMeasurementDisplay();
-        refreshSurveyLatLonDisplay();
-        refreshDerivedViews();
+        refreshUiForCurrentMode();
     }
 
     private void applyModeSelection() {
@@ -429,26 +363,28 @@ public class LevelSettingActivity extends ScaledAppCompatActivity {
                     NumpadPositionConfig.SCREEN_X, NumpadPositionConfig.SCREEN_Y);
         });
 
-        tvCoordX.setOnClickListener(v -> {
-            if (numpad.isShowing()) { numpad.dismiss(); return; }
-            numpad.setOnConfirmListener(value -> tvCoordX.setText(value));
-            numpad.showForAtScreen(tvCoordX, tvCoordX,
-                    NumpadPositionConfig.SCREEN_X, NumpadPositionConfig.SCREEN_Y);
-        });
+        tvCoordX.setOnClickListener(v -> showCoordNumpad(tvCoordX, this::onCoordInputsChanged));
+        tvCoordY.setOnClickListener(v -> showCoordNumpad(tvCoordY, this::onCoordInputsChanged));
+        tvCoordZ.setOnClickListener(v -> showCoordNumpad(tvCoordZ, this::onCoordInputsChanged));
+    }
 
-        tvCoordY.setOnClickListener(v -> {
-            if (numpad.isShowing()) { numpad.dismiss(); return; }
-            numpad.setOnConfirmListener(value -> tvCoordY.setText(value));
-            numpad.showForAtScreen(tvCoordY, tvCoordY,
-                    NumpadPositionConfig.SCREEN_X, NumpadPositionConfig.SCREEN_Y);
+    private void showCoordNumpad(TextView target, Runnable onConfirm) {
+        if (numpad.isShowing()) {
+            numpad.dismiss();
+            return;
+        }
+        numpad.setOnConfirmListener(value -> {
+            target.setText(value);
+            onConfirm.run();
         });
+        numpad.showForAtScreen(target, target,
+                NumpadPositionConfig.SCREEN_X, NumpadPositionConfig.SCREEN_Y);
+    }
 
-        tvCoordZ.setOnClickListener(v -> {
-            if (numpad.isShowing()) { numpad.dismiss(); return; }
-            numpad.setOnConfirmListener(value -> tvCoordZ.setText(value));
-            numpad.showForAtScreen(tvCoordZ, tvCoordZ,
-                    NumpadPositionConfig.SCREEN_X, NumpadPositionConfig.SCREEN_Y);
-        });
+    private void onCoordInputsChanged() {
+        refreshCoordLatLonSummary();
+        refreshDepthLabel();
+        cacheState();
     }
 
     /** 设计高程 = 填挖量(tvTargetHeight) + 测量值(tvCurrentRef / 0x90)。 */
@@ -473,29 +409,45 @@ public class LevelSettingActivity extends ScaledAppCompatActivity {
     }
 
     private void refreshDerivedViews() {
-        if (tvTargetHeight == null || tvFillCut == null || tvCurrentRef == null || tvDepthLabel == null) {
+        if (isHeightMode) {
+            if (tvTargetHeight != null && tvFillCut != null && tvCurrentRef != null) {
+                refreshSurveyMeasurementDisplay();
+                syncDesignElevationFromInputs();
+                cacheState();
+            }
+        }
+        refreshDepthLabel();
+    }
+
+    /**
+     * 右侧预览设计面高程：高度定点读 tvFillCut，坐标定点读 tvCoordZ。
+     */
+    private void refreshDepthLabel() {
+        if (tvDepthLabel == null) {
             return;
         }
-
-        refreshSurveyMeasurementDisplay();
-        syncDesignElevationFromInputs();
-
-        Double designElev = parseDoubleOrNull(tvFillCut.getText());
-        Double measurementM = getSurveyMeasurementM();
-
-        if (designElev == null || measurementM == null) {
+        CharSequence designSource = isHeightMode
+                ? (tvFillCut == null ? null : tvFillCut.getText())
+                : (tvCoordZ == null ? null : tvCoordZ.getText());
+        Double designElev = parseDoubleOrNull(designSource);
+        if (designElev == null) {
             tvDepthLabel.setText("-- m");
-            cacheState();
+            tvDepthLabel.setTextColor(getColor(R.color.level_unselected));
             return;
         }
-
-        String designText = formatMetersValue(designElev);
-        tvDepthLabel.setText(designText + " m");
-        tvDepthLabel.setTextColor(designElev < measurementM
-                ? Color.parseColor("#FFEF4444")
-                : Color.parseColor("#FF22C55E"));
-
-        cacheState();
+        tvDepthLabel.setText(formatMetersValue(designElev) + " m");
+        if (isHeightMode) {
+            Double measurementM = getSurveyMeasurementM();
+            if (measurementM == null) {
+                tvDepthLabel.setTextColor(getColor(R.color.level_unselected));
+            } else {
+                tvDepthLabel.setTextColor(designElev < measurementM
+                        ? Color.parseColor("#FFEF4444")
+                        : Color.parseColor("#FF22C55E"));
+            }
+        } else {
+            tvDepthLabel.setTextColor(getColor(R.color.level_selected));
+        }
     }
 
     private void cacheState() {
@@ -530,10 +482,6 @@ public class LevelSettingActivity extends ScaledAppCompatActivity {
         return s.startsWith("-") ? "−" + s.substring(1) : s;
     }
 
-    private static String formatCoordValue(double v) {
-        return String.format(Locale.US, "%.9f", v);
-    }
-
     // ── 按钮动作 ──────────────────────────────────────────────
 
     private void setupActions() {
@@ -541,9 +489,9 @@ public class LevelSettingActivity extends ScaledAppCompatActivity {
 
         helpTooltip = new HelpTooltip(
                 this,
-                "选择左/中/右斗尖会发送 0x10 测点，TCU 回 0x90 后自动填入测量值(高度)与经纬度。"
-                        + "高度定点：填挖量、设计高程可编辑，预览为设计面高程。"
-                        + "坐标定点：目标经纬度高可再改。两种模式均依赖顶栏「已连接」。"
+                "高度定点：选斗尖测点(0x10)得测量值，填挖量可编辑，设计高程=测量值+填挖量。"
+                        + "坐标定点：手动输入目标经度、纬度、设计高程；"
+                        + "「当前经纬度」为纬度与经度的汇总显示。需顶栏「已连接」。"
         );
         helpTooltip.attach(btnLevelHelp);
 
@@ -552,7 +500,7 @@ public class LevelSettingActivity extends ScaledAppCompatActivity {
 
     private void enterLevelFeatureIfNeeded() {
         if (workflow.isFeatureActive()) {
-            if (!LevelTaskState.hasSurveyHeight()) {
+            if (isHeightMode && !LevelTaskState.hasSurveyHeight()) {
                 requestSurveyForSelectedRef();
             }
             return;
@@ -562,7 +510,9 @@ public class LevelSettingActivity extends ScaledAppCompatActivity {
             @Override
             public void onSuccess() {
                 setWorkflowBusy(false, null);
-                requestSurveyForSelectedRef();
+                if (isHeightMode) {
+                    requestSurveyForSelectedRef();
+                }
             }
 
             @Override
@@ -575,10 +525,25 @@ public class LevelSettingActivity extends ScaledAppCompatActivity {
 
     private void proceedToPrecheck() {
         cacheState();
-        if (!LevelTaskState.hasNumericValues()) {
-            Toast.makeText(this, "请先完成测点并填写填挖量", Toast.LENGTH_SHORT).show();
+        if (isHeightMode) {
+            if (!LevelTaskState.hasNumericValues()) {
+                if (!LevelTaskState.hasSurveyHeight()) {
+                    ensureSurveyThenSubmit();
+                    return;
+                }
+                Toast.makeText(this, "请先完成测点并填写填挖量", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            submitLevelParamsAndGo();
             return;
         }
+        refreshCoordLatLonSummary();
+        cacheState();
+        if (!LevelTaskState.hasCoordNumericValues()) {
+            Toast.makeText(this, "请填写目标经度、纬度与设计高程", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        // §6.2：坐标定点也需 0x10 测点 → 0x11 下发设计高程 → 0x91 确认后才能进预检/0x40
         if (!LevelTaskState.hasSurveyHeight()) {
             ensureSurveyThenSubmit();
             return;
@@ -683,10 +648,7 @@ public class LevelSettingActivity extends ScaledAppCompatActivity {
         if (btnLevelNext != null) {
             btnLevelNext.setEnabled(!busy);
         }
-        refreshSurveyMeasurementDisplay();
-        if (!busy || !LevelTaskState.hasSurveyHeight()) {
-            refreshSurveyLatLonDisplay();
-        }
+        refreshUiForCurrentMode();
     }
 
 }

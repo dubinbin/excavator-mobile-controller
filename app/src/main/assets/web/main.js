@@ -213,7 +213,8 @@ function degToRad(value) {
 const IMU_CONFIG = {
   boom:   { sign: -1 },
   stick:  { inputStart: -171.66, outputStart: 96, sign: 1 },
-  bucket: { inputStart: 35.14, outputStart: 20, sign: -1, scale: 33 / (60 - 35.14) }
+  bucket: { inputStart: 70, outputStart: 20, sign: -1, scale: 33 / (60 - 35.14) }
+  // 35.15,但是这里偏差应该稍微大一点的
 };
 
 function normalizeAngleDelta(value) {

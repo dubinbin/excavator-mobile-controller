@@ -4,6 +4,7 @@ import android.os.Bundle;
 import android.view.View;
 import android.widget.ImageView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
@@ -19,6 +20,8 @@ public class DitchSideWorkSettingActivity extends ScaledAppCompatActivity {
 
     private HelpTooltip helpTooltip;
     private NumpadView numpad;
+    private boolean workflowBusy;
+    private final DitchTcuWorkflow workflow = DitchTcuWorkflow.getInstance();
 
     private TextView tvWaveParam1;
     private TextView tvWaveParam2;
@@ -63,10 +66,7 @@ public class DitchSideWorkSettingActivity extends ScaledAppCompatActivity {
         }
 
         if (btnNext != null) {
-            btnNext.setOnClickListener(v -> {
-                saveCurrentInputs();
-                DitchStepNavigation.goToNext(this);
-            });
+            btnNext.setOnClickListener(v -> submitParamsAndGoPrecheck());
         }
 
         DitchStepNavigation.bindStepBar(this);
@@ -126,6 +126,44 @@ public class DitchSideWorkSettingActivity extends ScaledAppCompatActivity {
                 textOf(tvWaveParam3),
                 textOf(tvWaveParam4)
         );
+    }
+
+    private void submitParamsAndGoPrecheck() {
+        saveCurrentInputs();
+        if (workflowBusy) {
+            return;
+        }
+        if (!DitchTaskState.canSubmitDitchParams()) {
+            Toast.makeText(this, "请完成 A/B 点与沟深、宽度参数", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (DitchTaskState.isTcuParamsAccepted()) {
+            DitchStepNavigation.goToNext(this);
+            return;
+        }
+        workflowBusy = true;
+        if (btnNext != null) {
+            btnNext.setEnabled(false);
+        }
+        workflow.submitDitchParams(new DitchTcuWorkflow.StepCallback() {
+            @Override
+            public void onSuccess() {
+                workflowBusy = false;
+                if (btnNext != null) {
+                    btnNext.setEnabled(true);
+                }
+                DitchStepNavigation.goToNext(DitchSideWorkSettingActivity.this);
+            }
+
+            @Override
+            public void onError(String message) {
+                workflowBusy = false;
+                if (btnNext != null) {
+                    btnNext.setEnabled(true);
+                }
+                Toast.makeText(DitchSideWorkSettingActivity.this, message, Toast.LENGTH_LONG).show();
+            }
+        });
     }
 
     private static void setTextIfPresent(TextView tv, String value) {

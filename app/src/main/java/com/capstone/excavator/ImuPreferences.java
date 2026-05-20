@@ -196,6 +196,11 @@ public final class ImuPreferences {
         }
     }
 
+    /** {@link Params#boomLength} 等连杆长度在偏好设置里以毫米存储，正运动学使用米。 */
+    public static double lengthMmToMeters(double lengthMm) {
+        return lengthMm / 1000.0;
+    }
+
     /** Format a double for display in an EditText (no unnecessary trailing zeros). */
     public static String fmt(double v) {
         if (v == Math.floor(v) && !Double.isInfinite(v)) {

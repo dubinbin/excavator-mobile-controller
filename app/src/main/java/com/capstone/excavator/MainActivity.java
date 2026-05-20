@@ -83,8 +83,7 @@ public class MainActivity extends ScaledAppCompatActivity {
     private View rightActivityPanel;
     private View verticalActivityPanelLeft;
     private View verticalActivityPanelRight;
-    private View leftSpeedIndicator;
-    private View rightSpeedIndicator;
+    private final LevelTaskGuidanceController levelTaskGuidance = new LevelTaskGuidanceController();
     private MotionModeSegmentView motionModeSegment;
     private volatile int desiredMotionModeChannelIndex = MotionModeSegmentView.INDEX_STOP;
     private final AtomicInteger motionModeChannelApplyGeneration = new AtomicInteger();
@@ -139,46 +138,6 @@ public class MainActivity extends ScaledAppCompatActivity {
     private float relativeStickAngle = 0f;
     private float relativeBucketAngle = 0f;
 
-    // ── 找平作业：设计面（臂局部坐标）快照 ──────────────────────────────
-    /** 设计面在臂局部 z 坐标的值；null 表示尚未快照。 */
-    private Double levelDesignZLocal = null;
-    /** 上一帧是否处于「LEVEL 作业 + RUNNING」状态，用于触发自动快照。 */
-    private boolean levelTaskRunningPrev = false;
-    private VerticalSpectrumGaugeView leftActivityGauge;
-    private VerticalSpectrumGaugeView rightActivityGauge;
-
-    // ── 度量条单位 / 每格分辨率配置 ──────────────────────────────────────
-    /** 与  保持一致（一侧的格子数）。 */
-    private static final int GAUGE_SLOTS_PER_HALF = 19;
-
-    /** 度量条单位：CM=长度（找平/挖渠），DEG=角度（其他场景）。 */
-    private enum GaugeUnit { CM, DEG }
-
-    /**
-     * 每格代表的物理量。默认 3cm / 3°；范围（一侧）= {@link #GAUGE_SLOTS_PER_HALF} × 每格量。
-     * 改这里可以全局调整指示条灵敏度。
-     */
-    private static final class GaugeUnitConfig {
-        final float cmPerSlot;
-        final float degPerSlot;
-        GaugeUnitConfig(float cmPerSlot, float degPerSlot) {
-            this.cmPerSlot = cmPerSlot;
-            this.degPerSlot = degPerSlot;
-        }
-        float rangeFor(GaugeUnit u) {
-            return GAUGE_SLOTS_PER_HALF * (u == GaugeUnit.CM ? cmPerSlot : degPerSlot);
-        }
-    }
-    private final GaugeUnitConfig gaugeUnitConfig = new GaugeUnitConfig(3f, 3f);
-    /** 当前左/右活动度量条用的单位：找平任务下为 CM。 */
-    private GaugeUnit currentGaugeUnit = GaugeUnit.CM;
-
-    /** 缓存的左/右速度+方向指示器（避免重复 findViewById）。 */
-    private SpeedDirectionIndicatorView leftSpeedDirView;
-    private SpeedDirectionIndicatorView rightSpeedDirView;
-    /** dz 绝对值大于此阈值（cm）时，把方向箭头按符号高亮，否则中性。 */
-    private static final float GAUGE_DIR_THRESHOLD_CM = 0.5f;
-    
     // UDP数据接收超时相关
     private Handler udpTimeoutHandler;
     private Runnable udpTimeoutRunnable;
@@ -411,8 +370,8 @@ public class MainActivity extends ScaledAppCompatActivity {
         rightActivityPanel = findViewById(R.id.rightActivityPanel);
         verticalActivityPanelLeft = findViewById(R.id.verticalActivityPanelLeft);
         verticalActivityPanelRight = findViewById(R.id.verticalActivityPanelRight);
-        leftSpeedIndicator = findViewById(R.id.leftSpeedIndicator);
-        rightSpeedIndicator = findViewById(R.id.rightSpeedIndicator);
+        levelTaskGuidance.setImuAngleConfig(imuAngleConfig);
+        levelTaskGuidance.bind(this);
         motionModeSegment = findViewById(R.id.motionModeSegment);
         if (motionModeSegment != null) {
             motionModeSegment.setOnIndexChangeListener(this::onMotionModeChanged);
@@ -493,9 +452,12 @@ public class MainActivity extends ScaledAppCompatActivity {
         bottomBar.setOnEndListener(() -> {
             if (confirmDialog == null) return;
             confirmDialog.show(new ConfirmDialogView.Config.Builder("确认退出当前任务?")
+                    .subtitle("将清空本次测点、参数与填挖引导基准，避免影响下次作业")
                     .confirmText("确认退出")
                     .cancelText("取消")
                     .onConfirm(() -> {
+                        TaskTypeState.Type endingType = TaskTypeState.getInstance().getType();
+                        clearTaskSessionOnEnd(endingType);
                         WorkRunState.getInstance().setState(WorkRunState.State.ENDED);
                         TaskTypeState.getInstance().setType(TaskTypeState.Type.NONE);
                         if (inlineToast != null) inlineToast.showMessage("任务已终止");
@@ -518,7 +480,31 @@ public class MainActivity extends ScaledAppCompatActivity {
         setReceiverLinkConnected(false);
 
         applyTaskOverlayVisibility();
-        setupActivityGaugeViews();
+    }
+
+    /**
+     * 主页「结束任务」：退出 TCU 功能并清空本地任务态/引导快照，防止下次作业沿用上次数据。
+     */
+    private void clearTaskSessionOnEnd(TaskTypeState.Type endingType) {
+        LevelTcuWorkflow levelWorkflow = LevelTcuWorkflow.getInstance();
+        DitchTcuWorkflow ditchWorkflow = DitchTcuWorkflow.getInstance();
+        levelWorkflow.cancelPending();
+        ditchWorkflow.cancelPending();
+
+        if (endingType == TaskTypeState.Type.LEVEL && levelWorkflow.isFeatureActive()) {
+            levelWorkflow.exitFeature(null);
+        } else {
+            levelWorkflow.resetLocal();
+        }
+        if (endingType == TaskTypeState.Type.DITCH && ditchWorkflow.isFeatureActive()) {
+            ditchWorkflow.exitFeature(null);
+        } else {
+            ditchWorkflow.resetLocal();
+        }
+
+        LevelTaskState.resetAll();
+        DitchTaskState.reset();
+        SlopeRepairTaskState.reset();
     }
 
     private void applyTaskOverlayVisibility() {
@@ -542,157 +528,12 @@ public class MainActivity extends ScaledAppCompatActivity {
         setVisible(referencePointTitleBar, ditchTask);
         setVisible(centerCapsuleSpeedDirectionContainer, ditchTask);
         setTopMarginDp(livePillBlur, ditchTask ? 85f : 55f);
-        setStartMarginDp(leftSpeedIndicator, slopeTask ? 80.44f : 28.44f);
-        setEndMarginDp(rightSpeedIndicator, slopeTask ? 80.44f : 28.44f);
+        levelTaskGuidance.applySpeedIndicatorOverlay(slopeTask, taskActive);
 
-        setVisible(leftSpeedIndicator, taskActive);
-        setVisible(rightSpeedIndicator, taskActive);
-
-        boolean levelRunning = taskActive
-                && taskType == TaskTypeState.Type.LEVEL
-                && workState == WorkRunState.State.RUNNING;
-        handleLevelTaskRunningTransition(levelRunning);
-    }
-
-    /**
-     * LEVEL 作业进入 RUNNING 时，快照「设计面在臂局部坐标的 z 值」：
-     * z_design = z_tip(now) - (距离 + 填挖量)
-     *
-     * 这要求：用户在 LevelSettingActivity 输入的「目标高度=斗尖到地面距离」是在
-     * 「即将开始作业的当前姿态」下测量的。若中途变姿，可加一个「重新校准」按钮再次调用此处。
-     */
-    private void handleLevelTaskRunningTransition(boolean levelRunning) {
-        if (levelRunning && !levelTaskRunningPrev) {
-            setGaugeUnit(GaugeUnit.CM);
-            snapshotLevelDesignSurface();
-            refreshLevelDepthGauges();
-        } else if (!levelRunning && levelTaskRunningPrev) {
-            levelDesignZLocal = null;
-            if (leftActivityGauge != null) leftActivityGauge.setValue(0f);
-            if (rightActivityGauge != null) rightActivityGauge.setValue(0f);
-        }
-        levelTaskRunningPrev = levelRunning;
-    }
-
-    private void snapshotLevelDesignSurface() {
-        if (!useRealData) {
-            levelDesignZLocal = null;
-            return;
-        }
-        double offsetM;
-        if (LevelTaskState.hasAcceptedTargetHeight() && LevelTaskState.hasSurveyHeight()) {
-            offsetM = LevelTaskState.getAcceptedTargetHeightM() - LevelTaskState.getSurveyHeightM();
-        } else if (LevelTaskState.hasNumericValues()) {
-            offsetM = LevelTaskState.getTargetHeightM();
-        } else {
-            levelDesignZLocal = null;
-            return;
-        }
-        if (Double.isNaN(offsetM)) {
-            levelDesignZLocal = null;
-            return;
-        }
-        double zTipNow = currentBucketTipZ();
-        if (Double.isNaN(zTipNow)) {
-            levelDesignZLocal = null;
-            return;
-        }
-        levelDesignZLocal = zTipNow - offsetM;
-        Log.d("LevelGauge", "snapshot z_design=" + levelDesignZLocal
-                + " (z_tip=" + zTipNow + ", offsetM=" + offsetM + ")");
-    }
-
-    /**
-     * 用当前 IMU 角度 + 当前已加载的臂长配置，按知识库 §5 求斗尖 z（臂局部坐标）。
-     */
-    private double currentBucketTipZ() {
-        if (imuAngleConfig == null) return Double.NaN;
-        ImuAngleConverter.Dimensions dim = imuAngleConfig.dimensions;
-        if (dim == null || dim.boomLength <= 0 || dim.stickLength <= 0 || dim.bucketLength <= 0) {
-            return Double.NaN;
-        }
-        return ArmForwardKinematics.bucketTipZ(
-                realBoomAngle, realStickAngle, realBucketAngle,
-                dim.boomLength, dim.stickLength, dim.bucketLength);
-    }
-
-    /**
-     * 由 IMU 数据驱动左右度量条：显示 dz = z_tip − z_design（找平任务：cm）。
-     * 正：斗尖在设计面之上（还要挖）；负：低于设计面（超挖）。
-     * 量程由 {@link #gaugeUnitConfig} 控制。
-     */
-    private void refreshLevelDepthGauges() {
-        if (leftActivityGauge == null && rightActivityGauge == null
-                && leftSpeedDirView == null && rightSpeedDirView == null) {
-            return;
-        }
-        // 真实数据未到位 / 任务未运行 / 设计面未快照 → 把所有 UI 置零再返回。
-        if (!levelTaskRunningPrev || levelDesignZLocal == null || !useRealData) {
-            if (leftActivityGauge != null) leftActivityGauge.setValue(0f);
-            if (rightActivityGauge != null) rightActivityGauge.setValue(0f);
-            applySpeedIndicators(0f);
-            return;
-        }
-        double zTipNow = currentBucketTipZ();
-        if (Double.isNaN(zTipNow)) {
-            return;
-        }
-        float value;
-        if (currentGaugeUnit == GaugeUnit.CM) {
-            value = (float) ((zTipNow - levelDesignZLocal) * 100.0); // m → cm
-        } else {
-            // 角度模式下保留扩展位，暂时直接用 dz(米) 数值。
-            value = (float) (zTipNow - levelDesignZLocal);
-        }
-        if (leftActivityGauge != null) leftActivityGauge.setValue(value);
-        if (rightActivityGauge != null) rightActivityGauge.setValue(value);
-        applySpeedIndicators(value);
-    }
-
-    /** 把当前 {@link #currentGaugeUnit} 对应的量程下发给左右度量条。 */
-    private void applyGaugeUnitToViews() {
-        float range = gaugeUnitConfig.rangeFor(currentGaugeUnit);
-        if (leftActivityGauge != null) {
-            leftActivityGauge.setRangeMax(range);
-            leftActivityGauge.setValue(0f);
-        }
-        if (rightActivityGauge != null) {
-            rightActivityGauge.setRangeMax(range);
-            rightActivityGauge.setValue(0f);
-        }
-    }
-
-    /** 切换度量条单位（cm/°），同步刷新量程。 */
-    private void setGaugeUnit(GaugeUnit unit) {
-        if (unit == null || unit == currentGaugeUnit) return;
-        currentGaugeUnit = unit;
-        applyGaugeUnitToViews();
-    }
-
-    /**
-     * 把 dz 数值（cm）同步喂给左右速度方向卡片：
-     * - 速度数字显示 |valueCm|
-     * - 方向：valueCm 远大于 0 → DOWN（铲斗在设计面之上，需再下挖），
-     *         远小于 0 → UP（已超挖，需抬起），接近 0 → NEUTRAL
-     */
-    private void applySpeedIndicators(float valueCm) {
-        int dir;
-        if (valueCm > GAUGE_DIR_THRESHOLD_CM) {
-            dir = SpeedDirectionIndicatorView.DIRECTION_DOWN_HIGHLIGHT;
-        } else if (valueCm <= -GAUGE_DIR_THRESHOLD_CM) {
-            dir = SpeedDirectionIndicatorView.DIRECTION_UP_HIGHLIGHT;
-        } else {
-            dir = SpeedDirectionIndicatorView.DIRECTION_NEUTRAL;
-        }
-        float mag = Math.abs(valueCm);
-        if (leftSpeedDirView != null) {
-            leftSpeedDirView.setSpeed(mag);
-            leftSpeedDirView.setDirection(dir);
-        }
-        if (rightSpeedDirView != null) {
-            rightSpeedDirView.setSpeed(mag);
-            rightSpeedDirView.setDirection(dir);
-        }
+        boolean guidanceRunning = taskActive
+                && workState == WorkRunState.State.RUNNING
+                && (taskType == TaskTypeState.Type.LEVEL || taskType == TaskTypeState.Type.DITCH);
+        levelTaskGuidance.onGuidanceRunningChanged(guidanceRunning, taskType, useRealData);
     }
 
     private static void setVisible(View view, boolean visible) {
@@ -717,59 +558,6 @@ public class MainActivity extends ScaledAppCompatActivity {
         }
         marginLayoutParams.topMargin = topMarginPx;
         view.setLayoutParams(marginLayoutParams);
-    }
-
-    private void setStartMarginDp(View view, float startMarginDp) {
-        if (view == null) {
-            return;
-        }
-        ViewGroup.LayoutParams layoutParams = view.getLayoutParams();
-        if (!(layoutParams instanceof ViewGroup.MarginLayoutParams)) {
-            return;
-        }
-
-        ViewGroup.MarginLayoutParams marginLayoutParams = (ViewGroup.MarginLayoutParams) layoutParams;
-        int startMarginPx = Math.round(startMarginDp * getResources().getDisplayMetrics().density);
-        if (marginLayoutParams.getMarginStart() == startMarginPx) {
-            return;
-        }
-        marginLayoutParams.setMarginStart(startMarginPx);
-        view.setLayoutParams(marginLayoutParams);
-    }
-
-    private void setEndMarginDp(View view, float endMarginDp) {
-        if (view == null) {
-            return;
-        }
-        ViewGroup.LayoutParams layoutParams = view.getLayoutParams();
-        if (!(layoutParams instanceof ViewGroup.MarginLayoutParams)) {
-            return;
-        }
-
-        ViewGroup.MarginLayoutParams marginLayoutParams = (ViewGroup.MarginLayoutParams) layoutParams;
-        int endMarginPx = Math.round(endMarginDp * getResources().getDisplayMetrics().density);
-        if (marginLayoutParams.getMarginEnd() == endMarginPx) {
-            return;
-        }
-        marginLayoutParams.setMarginEnd(endMarginPx);
-        view.setLayoutParams(marginLayoutParams);
-    }
-
-    /**
-     * 左右活动量表 / 速度方向卡片的一次性绑定：
-     * - 仅做 findViewById + 量程下发（量程来自 {@link #gaugeUnitConfig}）。
-     * - 数据由 {@link #refreshLevelDepthGauges()} 在 IMU/UDP 回调里推送。
-     */
-    private void setupActivityGaugeViews() {
-        if (leftActivityGauge == null) {
-            leftActivityGauge = findViewById(R.id.leftActivityGauge);
-        }
-        if (rightActivityGauge == null) {
-            rightActivityGauge = findViewById(R.id.rightActivityGauge);
-        }
-        leftSpeedDirView = findViewById(R.id.leftSpeedIndicator);
-        rightSpeedDirView = findViewById(R.id.rightSpeedIndicator);
-        applyGaugeUnitToViews();
     }
 
     private void setupOverlayBlurs() {
@@ -939,6 +727,7 @@ public class MainActivity extends ScaledAppCompatActivity {
         if (postureCardView != null) {
             postureCardView.setBucketAngleOffsetDeg((float) dim.bucketAngleOffsetDeg);
         }
+        levelTaskGuidance.setImuAngleConfig(imuAngleConfig);
     }
 
     /** 从 SharedPreferences 恢复臂长比例，WebView onPageFinished 后会随 payload 下发。 */
@@ -1285,8 +1074,10 @@ public class MainActivity extends ScaledAppCompatActivity {
             bottomBar.setAngles(rawBoom, rawStick, rawBucket,
                     rawCabinPitch, rawCabinRoll);
         }
-        // 找平度量条：每次解算后驱动 dz = z_tip - z_design
-        refreshLevelDepthGauges();
+        if (useRealData) {
+            levelTaskGuidance.setImuAngles(rawBoom, rawStick, rawBucket);
+        }
+        levelTaskGuidance.onImuUpdate(useRealData);
     }
     
     private void updatePositioning() {
@@ -1631,13 +1422,11 @@ public class MainActivity extends ScaledAppCompatActivity {
                                         }
                                         startUDPTimeoutCheck();
 
-                                        // 找平度量条：
-                                        // (a) 刚切到真实数据 & 当前是 LEVEL+RUNNING 但没快照 → 现在补一次快照
-                                        // (b) 每次 UDP 包：刷新 dz，让指示条跟随 IMU 实时变化
-                                        if (levelTaskRunningPrev && levelDesignZLocal == null) {
-                                            snapshotLevelDesignSurface();
-                                        }
-                                        refreshLevelDepthGauges();
+                                        levelTaskGuidance.setImuAngles(
+                                                parsed.boomAngle,
+                                                parsed.stickAngle,
+                                                parsed.bucketAngle);
+                                        levelTaskGuidance.onImuUpdate(useRealData);
                                     });
                                 }
                                 @Override

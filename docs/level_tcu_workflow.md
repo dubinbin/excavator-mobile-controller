@@ -64,12 +64,14 @@ IDLE → FEATURE_ACTIVE → SURVEY_DONE → PARAMS_ACCEPTED → TASK_ACTIVE
 | 开始作业 | `confirmTaskStart()` → 0x40/0xC0，成功后 `TaskType=LEVEL` + `RUNNING` 回主页 |
 | 返回 | `exitFeature()` 并回主页 |
 
-### MainActivity（作业中）
+### MainActivity / LevelTaskGuidanceController（作业中）
 
-- 进入 LEVEL+RUNNING 时 `snapshotLevelDesignSurface()`：
+逻辑集中在 `LevelTaskGuidanceController.java`（竖条、左右速度方向卡、设计面快照与刷新）。
+
+- 进入 LEVEL+RUNNING：`onLevelRunningChanged(true, useRealData)` → 快照设计面
   - 优先用 `AcceptedTargetHeight − SurveyHeight` 作为设计面偏移（米）
   - 否则回退 UI 的 `距离+填挖量`
-- `leftActivityGauge` / `rightActivityGauge`：`dz = z_tip − z_design`（cm）
+- `onImuUpdate(useRealData)`：`dz = z_tip − z_design`（cm）→ 竖条 + 速度方向卡
   - `z_tip` 来自 `0xFA` 实时 IMU + `ArmForwardKinematics`（100ms 刷新）
 
 ## 4. 数据字段（LevelTaskState）

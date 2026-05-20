@@ -32,6 +32,8 @@ public class DitchPrecheckActivity extends ScaledAppCompatActivity {
     private TextView tvPrecheckImuStatus;
     private TextView tvPrecheckImuDesc;
     private HelpTooltip helpTooltip;
+    private boolean workflowBusy;
+    private final DitchTcuWorkflow workflow = DitchTcuWorkflow.getInstance();
     private final RtkState.OnRtkChangeListener rtkChangeListener =
             (lat, lon, valid) -> runOnUiThread(this::refreshPrecheckInfo);
 
@@ -67,19 +69,15 @@ public class DitchPrecheckActivity extends ScaledAppCompatActivity {
         );
         helpTooltip.attach(help);
 
-        DitchStepNavigation.bindBackToMain(btnBack, this);
+        if (btnBack != null) {
+            btnBack.setOnClickListener(v -> exitDitchAndFinish());
+        }
         if (btnPrev != null) {
             btnPrev.setOnClickListener(v -> DitchStepNavigation.goToPrevious(this));
         }
         DitchStepNavigation.bindStepBar(this);
         if (btnStart != null) {
-            btnStart.setOnClickListener(v -> {
-                TaskTypeState.getInstance().setType(TaskTypeState.Type.DITCH);
-                WorkRunState.getInstance().setState(WorkRunState.State.RUNNING);
-                Toast.makeText(this, "开始作业", Toast.LENGTH_SHORT).show();
-                startActivity(new Intent(this, MainActivity.class));
-                DitchTaskState.reset();
-            });
+            btnStart.setOnClickListener(v -> confirmAndStart());
         }
     }
 
@@ -111,6 +109,71 @@ public class DitchPrecheckActivity extends ScaledAppCompatActivity {
             controller.hide(WindowInsetsCompat.Type.systemBars());
             controller.setSystemBarsBehavior(
                     WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+        }
+    }
+
+    private void confirmAndStart() {
+        if (workflowBusy) {
+            return;
+        }
+        if (!DitchTaskState.isTcuParamsAccepted()) {
+            Toast.makeText(this, "挖沟参数尚未被 TCU 确认", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        workflowBusy = true;
+        setBusy(true);
+        workflow.confirmTaskStart(new DitchTcuWorkflow.StepCallback() {
+            @Override
+            public void onSuccess() {
+                setBusy(false);
+                TaskTypeState.getInstance().setType(TaskTypeState.Type.DITCH);
+                WorkRunState.getInstance().setState(WorkRunState.State.RUNNING);
+                Toast.makeText(DitchPrecheckActivity.this, "挖沟任务已激活", Toast.LENGTH_SHORT).show();
+                Intent intent = new Intent(DitchPrecheckActivity.this, MainActivity.class);
+                intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                startActivity(intent);
+                finish();
+            }
+
+            @Override
+            public void onError(String message) {
+                setBusy(false);
+                Toast.makeText(DitchPrecheckActivity.this, message, Toast.LENGTH_LONG).show();
+            }
+        });
+    }
+
+    private void exitDitchAndFinish() {
+        workflow.cancelPending();
+        setBusy(false);
+        if (!workflow.isFeatureActive()) {
+            DitchTaskState.reset();
+            navigateToMain();
+            return;
+        }
+        workflow.exitFeature(new DitchTcuWorkflow.StepCallback() {
+            @Override
+            public void onSuccess() {
+                DitchTaskState.reset();
+                navigateToMain();
+            }
+
+            @Override
+            public void onError(String message) {
+                Toast.makeText(DitchPrecheckActivity.this, message, Toast.LENGTH_SHORT).show();
+                DitchTaskState.reset();
+                navigateToMain();
+            }
+        });
+    }
+
+    private void setBusy(boolean busy) {
+        workflowBusy = busy;
+        if (btnStart != null) {
+            btnStart.setEnabled(!busy);
+        }
+        if (btnPrev != null) {
+            btnPrev.setEnabled(!busy);
         }
     }
 

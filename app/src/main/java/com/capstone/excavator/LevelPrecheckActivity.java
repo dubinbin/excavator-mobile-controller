@@ -100,7 +100,10 @@ public class LevelPrecheckActivity extends ScaledAppCompatActivity {
             return;
         }
         if (workflow.getPhase().ordinal() < LevelTcuWorkflow.Phase.PARAMS_ACCEPTED.ordinal()) {
-            Toast.makeText(this, "找平参数尚未被 TCU 确认", Toast.LENGTH_SHORT).show();
+            String hint = LevelTaskState.isHeightMode()
+                    ? "请返回上一步完成测点并下发找平参数(0x11)"
+                    : "请返回上一步完成测点、下发设计高程(0x11)并等待 TCU 确认(0x91)";
+            Toast.makeText(this, hint, Toast.LENGTH_SHORT).show();
             return;
         }
         setBusy(true);
@@ -159,26 +162,20 @@ public class LevelPrecheckActivity extends ScaledAppCompatActivity {
         if (tvPrecheckMode != null) {
             tvPrecheckMode.setText("目标方式: " + LevelTaskState.getModeText());
         }
+        String designElev = LevelTaskState.getDesignElevationDisplayText();
         if (tvPrecheckTarget != null) {
-            tvPrecheckTarget.setText(buildTargetText());
+            tvPrecheckTarget.setText("目标高度: " + designElev + " m");
         }
         if (tvPrecheckFillCut != null) {
-            tvPrecheckFillCut.setText("填挖量: " + valueOrPlaceholder(LevelTaskState.getFillCut()) + " m");
+            if (LevelTaskState.isHeightMode()) {
+                tvPrecheckFillCut.setVisibility(View.VISIBLE);
+                tvPrecheckFillCut.setText("设计高程: " + designElev + " m");
+            } else {
+                tvPrecheckFillCut.setVisibility(View.GONE);
+            }
         }
         applyRtkStatus();
         applyImuStatus();
-    }
-
-    private String buildTargetText() {
-        if (LevelTaskState.hasAcceptedTargetHeight()) {
-            return "TCU 目标高度: " + LevelTaskState.getAcceptedTargetHeightText() + " m";
-        }
-        if (LevelTaskState.isHeightMode()) {
-            return "目标高度: " + valueOrPlaceholder(LevelTaskState.getTargetHeight()) + " m";
-        }
-        return "目标坐标: 经度 " + valueOrPlaceholder(LevelTaskState.getTargetLon())
-                + " / 纬度 " + valueOrPlaceholder(LevelTaskState.getTargetLat())
-                + " / 高程 " + valueOrPlaceholder(LevelTaskState.getTargetZ());
     }
 
     private void applyRtkStatus() {

@@ -622,12 +622,12 @@
                         android:layout_height="36dp"
                         >
                         <TextView
-                            android:id="@+id/tvCurrentRef"
+                            android:id="@+id/tvAbDistance"
                             style="@style/InputWithSuffixValue"
                             android:clickable="true"
                             android:layout_marginStart="30dp"
                             android:focusable="true"
-                            android:text="0.38"
+                            android:text="--"
                             android:textColor="#FF97A4C2"
                             android:textSize="14sp"
                             />

@@ -1,5 +1,10 @@
 package com.capstone.excavator;
 
+import java.util.Locale;
+
+/**
+ * 挖沟任务本地状态：A/B 点定点、填挖/目标高度、沟型与侧向参数、A'/B' 建模点。
+ */
 public final class DitchTaskState {
 
     public static final int DITCH_SQUARE = 0;
@@ -12,7 +17,36 @@ public final class DitchTaskState {
     private static volatile int ditchType = DITCH_SQUARE;
     private static volatile int refA = REF_MIDDLE;
     private static volatile int refB = REF_MIDDLE;
+    private static volatile boolean heightMode = true;
     private static volatile String abDistance = "";
+    private static volatile boolean abDistanceManual;
+
+    private static volatile String targetHeightA = "";
+    private static volatile String fillCutA = "";
+    private static volatile String targetLonA = "";
+    private static volatile String targetLatA = "";
+    private static volatile String fillCutCoordA = "";
+
+    private static volatile String targetHeightB = "";
+    private static volatile String fillCutB = "";
+    private static volatile String targetLonB = "";
+    private static volatile String targetLatB = "";
+    private static volatile String fillCutCoordB = "";
+
+    private static volatile double targetHeightAM = Double.NaN;
+    private static volatile double fillCutAM = Double.NaN;
+    private static volatile double targetHeightBM = Double.NaN;
+    private static volatile double fillCutBM = Double.NaN;
+    private static volatile double fillCutCoordAM = Double.NaN;
+    private static volatile double fillCutCoordBM = Double.NaN;
+
+    private static volatile int surveyAHeightTenthCm = Integer.MIN_VALUE;
+    private static volatile double surveyALat = Double.NaN;
+    private static volatile double surveyALon = Double.NaN;
+    private static volatile int surveyBHeightTenthCm = Integer.MIN_VALUE;
+    private static volatile double surveyBLat = Double.NaN;
+    private static volatile double surveyBLon = Double.NaN;
+
     private static volatile String longitudinalParam1 = "";
     private static volatile String longitudinalParam2 = "";
     private static volatile String longitudinalParam3 = "";
@@ -22,6 +56,9 @@ public final class DitchTaskState {
     private static volatile String sideParam3 = "";
     private static volatile String sideParam4 = "";
 
+    private static volatile boolean tcuParamsAccepted;
+    private static volatile boolean tcuTaskActive;
+
     private DitchTaskState() {
     }
 
@@ -30,6 +67,78 @@ public final class DitchTaskState {
         refA = normalizeRef(selectedRefA);
         refB = normalizeRef(selectedRefB);
         abDistance = safe(distance);
+    }
+
+    public static void setHeightMode(boolean height) {
+        heightMode = height;
+    }
+
+    public static void setAbDistanceManual(boolean manual) {
+        abDistanceManual = manual;
+    }
+
+    public static void updatePointA(
+            int ref,
+            String targetHeight,
+            String fillCut,
+            String lon,
+            String lat,
+            String fillCoord) {
+        refA = normalizeRef(ref);
+        targetHeightA = safe(targetHeight);
+        fillCutA = safe(fillCut);
+        targetLonA = safe(lon);
+        targetLatA = safe(lat);
+        fillCutCoordA = safe(fillCoord);
+        targetHeightAM = parseMeters(targetHeightA);
+        fillCutAM = parseMeters(fillCutA);
+        fillCutCoordAM = parseMeters(fillCutCoordA);
+    }
+
+    public static void updatePointB(
+            int ref,
+            String targetHeight,
+            String fillCut,
+            String lon,
+            String lat,
+            String fillCoord) {
+        refB = normalizeRef(ref);
+        targetHeightB = safe(targetHeight);
+        fillCutB = safe(fillCut);
+        targetLonB = safe(lon);
+        targetLatB = safe(lat);
+        fillCutCoordB = safe(fillCoord);
+        targetHeightBM = parseMeters(targetHeightB);
+        fillCutBM = parseMeters(fillCutB);
+        fillCutCoordBM = parseMeters(fillCutCoordB);
+    }
+
+    public static void updateSurveyA(int heightTenthCm, double lat, double lon) {
+        surveyAHeightTenthCm = heightTenthCm;
+        surveyALat = lat;
+        surveyALon = lon;
+        if (!abDistanceManual) {
+            recomputeAbDistance();
+        }
+    }
+
+    public static void updateSurveyB(int heightTenthCm, double lat, double lon) {
+        surveyBHeightTenthCm = heightTenthCm;
+        surveyBLat = lat;
+        surveyBLon = lon;
+        if (!abDistanceManual) {
+            recomputeAbDistance();
+        }
+    }
+
+    public static void recomputeAbDistance() {
+        PrimePoint a = computePrimeA();
+        PrimePoint b = computePrimeB();
+        if (a == null || b == null) {
+            return;
+        }
+        double dist = TcuBusinessCodec.horizontalDistanceM(a.lat, a.lon, b.lat, b.lon);
+        abDistance = formatMeters(dist);
     }
 
     public static void updateLongitudinalParams(String param1, String param2, String param3, String param4) {
@@ -46,11 +155,56 @@ public final class DitchTaskState {
         sideParam4 = safe(param4);
     }
 
+    public static void setTcuParamsAccepted(boolean accepted) {
+        tcuParamsAccepted = accepted;
+    }
+
+    public static void setTcuTaskActive(boolean active) {
+        tcuTaskActive = active;
+    }
+
+    public static void clearSurveyA() {
+        surveyAHeightTenthCm = Integer.MIN_VALUE;
+        surveyALat = Double.NaN;
+        surveyALon = Double.NaN;
+    }
+
+    public static void clearSurveyB() {
+        surveyBHeightTenthCm = Integer.MIN_VALUE;
+        surveyBLat = Double.NaN;
+        surveyBLon = Double.NaN;
+    }
+
+    public static void clearTcuSession() {
+        clearSurveyA();
+        clearSurveyB();
+        tcuParamsAccepted = false;
+        tcuTaskActive = false;
+    }
+
     public static void reset() {
         ditchType = DITCH_SQUARE;
         refA = REF_MIDDLE;
         refB = REF_MIDDLE;
+        heightMode = true;
         abDistance = "";
+        abDistanceManual = false;
+        targetHeightA = "";
+        fillCutA = "";
+        targetLonA = "";
+        targetLatA = "";
+        fillCutCoordA = "";
+        targetHeightB = "";
+        fillCutB = "";
+        targetLonB = "";
+        targetLatB = "";
+        fillCutCoordB = "";
+        targetHeightAM = Double.NaN;
+        fillCutAM = Double.NaN;
+        targetHeightBM = Double.NaN;
+        fillCutBM = Double.NaN;
+        fillCutCoordAM = Double.NaN;
+        fillCutCoordBM = Double.NaN;
         longitudinalParam1 = "";
         longitudinalParam2 = "";
         longitudinalParam3 = "";
@@ -59,6 +213,144 @@ public final class DitchTaskState {
         sideParam2 = "";
         sideParam3 = "";
         sideParam4 = "";
+        clearTcuSession();
+    }
+
+    public static boolean isHeightMode() {
+        return heightMode;
+    }
+
+    public static String getModeText() {
+        return heightMode ? "高度定点" : "坐标定点";
+    }
+
+    public static boolean hasSurveyA() {
+        return surveyAHeightTenthCm != Integer.MIN_VALUE;
+    }
+
+    public static boolean hasSurveyB() {
+        return surveyBHeightTenthCm != Integer.MIN_VALUE;
+    }
+
+    public static double getSurveyAHeightM() {
+        return hasSurveyA() ? TcuBusinessCodec.tenthCmToMeters(surveyAHeightTenthCm) : Double.NaN;
+    }
+
+    public static double getSurveyBHeightM() {
+        return hasSurveyB() ? TcuBusinessCodec.tenthCmToMeters(surveyBHeightTenthCm) : Double.NaN;
+    }
+
+    /**
+     * 主界面填挖引导：A'/B' 建模设计面高程（米），坐标/高度模式均可用。
+     */
+    public static double getGuidanceDesignElevationM() {
+        PrimePoint a = computePrimeA();
+        PrimePoint b = computePrimeB();
+        if (a != null && b != null) {
+            return (a.heightM + b.heightM) / 2.0;
+        }
+        if (a != null) {
+            return a.heightM;
+        }
+        if (b != null) {
+            return b.heightM;
+        }
+        return Double.NaN;
+    }
+
+    /**
+     * 与找平一致的填挖偏移（米）：快照时 {@code designZ = zTip - offset}。
+     * 高度定点：A/B「目标高度−测点高度」的平均；坐标定点：A/B 填挖量（tvCoordZ）的平均。
+     * 均为相对量，不可与运动学 zTip 的绝对高程混用。
+     */
+    public static double getGuidanceFillOffsetM() {
+        double sum = 0.0;
+        int count = 0;
+        if (heightMode) {
+            if (hasSurveyA() && !Double.isNaN(targetHeightAM)) {
+                sum += targetHeightAM - getSurveyAHeightM();
+                count++;
+            }
+            if (hasSurveyB() && !Double.isNaN(targetHeightBM)) {
+                sum += targetHeightBM - getSurveyBHeightM();
+                count++;
+            }
+        } else {
+            if (!Double.isNaN(fillCutCoordAM)) {
+                sum += fillCutCoordAM;
+                count++;
+            }
+            if (!Double.isNaN(fillCutCoordBM)) {
+                sum += fillCutCoordBM;
+                count++;
+            }
+        }
+        return count > 0 ? sum / count : Double.NaN;
+    }
+
+    public static boolean hasGuidanceDesignData() {
+        return !Double.isNaN(getGuidanceFillOffsetM());
+    }
+
+    public static boolean isPointAReady() {
+        if (heightMode) {
+            return hasSurveyA() && !Double.isNaN(targetHeightAM);
+        }
+        return isFilledNumeric(targetLonA) && isFilledNumeric(targetLatA) && isFilledNumeric(fillCutCoordA);
+    }
+
+    public static boolean isPointBReady() {
+        if (heightMode) {
+            return hasSurveyB() && !Double.isNaN(targetHeightBM);
+        }
+        return isFilledNumeric(targetLonB) && isFilledNumeric(targetLatB) && isFilledNumeric(fillCutCoordB);
+    }
+
+    public static boolean canSubmitDitchParams() {
+        return isPointAReady() && isPointBReady()
+                && computePrimeA() != null && computePrimeB() != null
+                && !Double.isNaN(parseMeters(sideParam3));
+    }
+
+    public static boolean isTcuParamsAccepted() {
+        return tcuParamsAccepted;
+    }
+
+    public static boolean isTcuTaskActive() {
+        return tcuTaskActive;
+    }
+
+    /** A' 建模点；无法计算时返回 {@code null}。 */
+    public static PrimePoint computePrimeA() {
+        if (heightMode) {
+            if (!hasSurveyA() || Double.isNaN(targetHeightAM)) {
+                return null;
+            }
+            return new PrimePoint(surveyALat, surveyALon, targetHeightAM);
+        }
+        Double lat = parseMeters(targetLatA);
+        Double lon = parseMeters(targetLonA);
+        Double h = fillCutCoordAM;
+        if (lat == null || lon == null || h == null) {
+            return null;
+        }
+        return new PrimePoint(lat, lon, h);
+    }
+
+    public static PrimePoint computePrimeB() {
+        if (heightMode) {
+            if (!hasSurveyB() || Double.isNaN(targetHeightBM)) {
+                return null;
+            }
+            return new PrimePoint(surveyBLat, surveyBLon, targetHeightBM);
+        }
+        Double lat = parseMeters(targetLatB);
+        Double lon = parseMeters(targetLonB);
+        Double h = fillCutCoordBM;
+        if (lat == null || lon == null || h == null) {
+            return null;
+        }
+        return new PrimePoint(lat, lon, h);
     }
 
     public static int getDitchType() {
@@ -93,6 +385,46 @@ public final class DitchTaskState {
         return abDistance;
     }
 
+    public static String getTargetHeightA() {
+        return targetHeightA;
+    }
+
+    public static String getFillCutA() {
+        return fillCutA;
+    }
+
+    public static String getTargetLonA() {
+        return targetLonA;
+    }
+
+    public static String getTargetLatA() {
+        return targetLatA;
+    }
+
+    public static String getFillCutCoordA() {
+        return fillCutCoordA;
+    }
+
+    public static String getTargetHeightB() {
+        return targetHeightB;
+    }
+
+    public static String getFillCutB() {
+        return fillCutB;
+    }
+
+    public static String getTargetLonB() {
+        return targetLonB;
+    }
+
+    public static String getTargetLatB() {
+        return targetLatB;
+    }
+
+    public static String getFillCutCoordB() {
+        return fillCutCoordB;
+    }
+
     public static String getLongitudinalParam1() {
         return longitudinalParam1;
     }
@@ -125,6 +457,23 @@ public final class DitchTaskState {
         return sideParam4;
     }
 
+    public static String formatMeters(double v) {
+        String s = String.format(Locale.US, "%.2f", v);
+        return s.startsWith("-") ? "−" + s.substring(1) : s;
+    }
+
+    public static final class PrimePoint {
+        public final double lat;
+        public final double lon;
+        public final double heightM;
+
+        PrimePoint(double lat, double lon, double heightM) {
+            this.lat = lat;
+            this.lon = lon;
+            this.heightM = heightM;
+        }
+    }
+
     private static int normalizeDitchType(int type) {
         return type == DITCH_TRAPEZOID ? DITCH_TRAPEZOID : DITCH_SQUARE;
     }
@@ -150,5 +499,35 @@ public final class DitchTaskState {
 
     private static String safe(String value) {
         return value == null ? "" : value.trim();
+    }
+
+    private static boolean isFilledNumeric(String value) {
+        if (!isUserEntered(value)) {
+            return false;
+        }
+        return !Double.isNaN(parseMeters(value));
+    }
+
+    private static boolean isUserEntered(String value) {
+        if (value == null) {
+            return false;
+        }
+        String s = value.trim();
+        return !s.isEmpty() && !"--".equals(s) && !"0".equals(s);
+    }
+
+    static Double parseMeters(String value) {
+        if (value == null) {
+            return null;
+        }
+        String s = value.trim().replace('−', '-');
+        if (s.isEmpty() || s.equals("--")) {
+            return null;
+        }
+        try {
+            return Double.parseDouble(s);
+        } catch (NumberFormatException e) {
+            return Double.NaN;
+        }
     }
 }

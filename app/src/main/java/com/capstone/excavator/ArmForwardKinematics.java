@@ -9,6 +9,8 @@ package com.capstone.excavator;
  * x = L1·cos(θ1) + L2·cos(θ1+θ2) + L3·cos(θ1+θ2+θ3)
  * z = L1·sin(θ1) + L2·sin(θ1+θ2) + L3·sin(θ1+θ2+θ3)
  * </pre>
+ * <p>
+ * 连杆长度 {@code boomLength}/{@code stickLength}/{@code bucketLength} 单位为米。
  */
 public final class ArmForwardKinematics {
 

@@ -173,7 +173,7 @@
                         android:textSize="13sp" />
                 </LinearLayout>
 
-                <!-- 行：目标高度 + 填挖量 -->
+                <!-- 行：目标高度(TCU) + 设计高程(与设置页 tvFillCut / tvCoordZ 同源) -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
@@ -208,7 +208,7 @@
                         android:id="@+id/tvPrecheckFillCut"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="填挖量: +0.15 m"
+                        android:text="设计高程: 2.15 m"
                         android:textColor="#FF22C55E"
                         android:textSize="13sp" />
                 </LinearLayout>

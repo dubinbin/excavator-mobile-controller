@@ -175,47 +175,6 @@
                     </LinearLayout>
                 </LinearLayout>
              
-            
-                <!-- <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginBottom="5dp"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal">
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="AB距离"
-                        android:textColor="#FF374151"
-                        android:textSize="14sp" />
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginEnd="10dp"
-                        android:text=":"
-                        android:textColor="#FF9CA3AF"
-                        android:textSize="14sp" />
-                    <LinearLayout
-                        android:layout_width="284dp"
-                        android:layout_height="36dp"
-                        >
-                        <TextView
-                            android:id="@+id/tvCurrentRef"
-                            style="@style/InputWithSuffixValue"
-                            android:clickable="true"
-                            android:layout_marginStart="30dp"
-                            android:focusable="true"
-                            android:text="0.38"
-                            android:textColor="#FF97A4C2"
-                            android:textSize="14sp"
-                            />
-                        <TextView
-                            style="@style/InputSuffixUnit"
-                            android:text="m"
-                        />
-                    </LinearLayout>
-                </LinearLayout> -->
 
                 <!-- Step2 标题 -->
                 <TextView

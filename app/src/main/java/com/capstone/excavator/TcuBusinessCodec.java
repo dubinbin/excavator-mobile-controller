@@ -18,6 +18,8 @@ public final class TcuBusinessCodec {
     public static final int MSG_SURVEY_RESULT = 0x90;
     public static final int MSG_LEVEL_PARAMS = 0x11;
     public static final int MSG_LEVEL_PARAMS_ACK = 0x91;
+    public static final int MSG_DITCH_PARAMS = 0x20;
+    public static final int MSG_DITCH_PARAMS_ACK = 0xA0;
     public static final int MSG_TASK_CONFIRM = 0x40;
     public static final int MSG_TASK_CONFIRM_ACK = 0xC0;
     public static final int MSG_INIT_STATUS = 0x50;
@@ -32,6 +34,8 @@ public final class TcuBusinessCodec {
     public static final int ACTION_ENTER = 0x01;
 
     public static final int POINT_REF = 0x00;
+    public static final int POINT_A = 0x01;
+    public static final int POINT_B = 0x02;
 
     public static final int RESULT_OK = 0x00;
 
@@ -103,6 +107,36 @@ public final class TcuBusinessCodec {
                 (byte) featureId,
                 (byte) action
         });
+    }
+
+    /**
+     * 挖沟参数整包（§4.6）：沟型 + A'/B' 点 + 沟深/宽度。
+     */
+    public static byte[] buildDitchParams(
+            int trenchType,
+            double aPrimeLat, double aPrimeLon, int aPrimeHeightTenthCm,
+            double bPrimeLat, double bPrimeLon, int bPrimeHeightTenthCm,
+            int trenchDepthTenthCm, int leftWidthTenthCm, int rightWidthTenthCm,
+            int topWidthTenthCm) {
+        byte[] payload = new byte[45];
+        int i = 0;
+        payload[i++] = (byte) trenchType;
+        i = writeInt40LatLon(payload, i, aPrimeLat);
+        i = writeInt40LatLon(payload, i, aPrimeLon);
+        writeInt32Be(payload, i, aPrimeHeightTenthCm);
+        i += 4;
+        i = writeInt40LatLon(payload, i, bPrimeLat);
+        i = writeInt40LatLon(payload, i, bPrimeLon);
+        writeInt32Be(payload, i, bPrimeHeightTenthCm);
+        i += 4;
+        writeInt32Be(payload, i, trenchDepthTenthCm);
+        i += 4;
+        writeInt32Be(payload, i, leftWidthTenthCm);
+        i += 4;
+        writeInt32Be(payload, i, rightWidthTenthCm);
+        i += 4;
+        writeInt32Be(payload, i, topWidthTenthCm);
+        return build(MSG_DITCH_PARAMS, payload);
     }
 
     /** §5.1 初始化确认：{@code RetryReason} 单字节。 */
@@ -191,6 +225,33 @@ public final class TcuBusinessCodec {
         dest[offset + 1] = (byte) (value >> 16);
         dest[offset + 2] = (byte) (value >> 8);
         dest[offset + 3] = (byte) value;
+    }
+
+    /** 经纬度 {@code int40} 大端编码，分辨率 {@code 1e-9 deg}。 */
+    public static int writeInt40LatLon(byte[] dest, int offset, double degrees) {
+        long scaled = Math.round(degrees * 1e9);
+        boolean negative = scaled < 0;
+        long magnitude = negative ? -scaled : scaled;
+        if (magnitude > 0x7FFFFFFFFFL) {
+            magnitude = 0x7FFFFFFFFFL;
+        }
+        dest[offset] = (byte) ((negative ? 0x80 : 0x00) | ((magnitude >> 32) & 0x7F));
+        dest[offset + 1] = (byte) (magnitude >> 24);
+        dest[offset + 2] = (byte) (magnitude >> 16);
+        dest[offset + 3] = (byte) (magnitude >> 8);
+        dest[offset + 4] = (byte) magnitude;
+        return offset + 5;
+    }
+
+    /** 两测点间水平距离（米），WGS84 近似。 */
+    public static double horizontalDistanceM(double lat1, double lon1, double lat2, double lon2) {
+        double r = 6371000.0;
+        double dLat = Math.toRadians(lat2 - lat1);
+        double dLon = Math.toRadians(lon2 - lon1);
+        double a = Math.sin(dLat / 2) * Math.sin(dLat / 2)
+                + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
+                * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        return r * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     }
 
     public static String resultMessage(int result) {
