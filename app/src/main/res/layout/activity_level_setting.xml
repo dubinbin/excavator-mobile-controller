@@ -224,7 +224,7 @@
                     android:layout_height="wrap_content"
                     android:orientation="vertical"
                     android:visibility="visible">
-                    <!-- 当前参考点（只读） -->
+                    <!-- 测量值（只读） -->
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
@@ -242,7 +242,7 @@
                                 android:layout_width="0dp"
                                 android:layout_height="wrap_content"
                                 android:layout_weight="1"
-                                android:text="当前参考点"
+                                android:text="测量值"
                                 android:textColor="#FF374151"
                                 android:textSize="14sp" />
                             <TextView
@@ -259,78 +259,24 @@
                             android:layout_weight="3"
                             android:gravity="center_vertical|end"
                             android:orientation="horizontal">
+
                             <LinearLayout
-                  
-                                android:layout_width="0dp"
-                                android:layout_height="36dp"
-                                android:layout_weight="1"
-                                >
-                                <TextView
-                                    android:id="@+id/tvCurrentRef"
-                                    style="@style/InputWithSuffixValue"
-                                    android:text="0.38"
-                                    android:textColor="#FF9CA3AF"
-                                    android:textSize="14sp"
-                                    />
-                                <TextView
-                                    style="@style/InputSuffixUnit"
-                                    android:text="m"
-                                    />
-                            </LinearLayout>
-                        </LinearLayout>
-                    </LinearLayout>
-                    <!-- 目标高度（可点击弹 Numpad） -->
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginBottom="5dp"
-                        android:gravity="center_vertical"
-                        android:orientation="horizontal">
-                        <LinearLayout
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="2"
-                            android:orientation="horizontal">
-                            <TextView
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_weight="1"
-                                android:text="目标高度"
-                                android:textColor="#FF374151"
-                                android:textSize="14sp" />
-                            <TextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:layout_marginEnd="10dp"
-                                android:text=":"
-                                android:textColor="#FF9CA3AF"
-                                android:textSize="14sp" />
-                        </LinearLayout>
-                        <LinearLayout
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="3"
-                            android:gravity="center_vertical|end"
-                            android:orientation="horizontal">
-                            <LinearLayout
+
                                 style="@style/InputWithSuffixContainer"
                                 android:layout_width="0dp"
                                 android:layout_height="36dp"
-                                android:layout_weight="1"
-                                >
+                                android:layout_weight="1">
+
                                 <TextView
-                                    android:id="@+id/tvTargetHeight"
+                                    android:id="@+id/tvCurrentRef"
                                     style="@style/InputWithSuffixValue"
-                                    android:clickable="true"
-                                    android:focusable="true"
-                                    android:text="0"
-                                    android:textColor="#FF111827"
-                                    android:textSize="14sp"
-                                    />
+                                    android:text="--"
+                                    android:textColor="#FF9CA3AF"
+                                    android:textSize="14sp" />
+
                                 <TextView
                                     style="@style/InputSuffixUnit"
-                                    android:text="m"
-                                    />
+                                    android:text="m" />
                             </LinearLayout>
                         </LinearLayout>
                     </LinearLayout>
@@ -338,6 +284,7 @@
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
+                        android:layout_marginBottom="5dp"
                         android:gravity="center_vertical"
                         android:orientation="horizontal">
                         <LinearLayout
@@ -372,19 +319,73 @@
                                 android:layout_height="36dp"
                                 android:layout_weight="1"
                                 >
+
                                 <TextView
-                                    android:id="@+id/tvFillCut"
+                                    android:id="@+id/tvTargetHeight"
                                     style="@style/InputWithSuffixValue"
                                     android:clickable="true"
                                     android:focusable="true"
                                     android:text="0"
-                                    android:textColor="#FF111827"
-                                    android:textSize="14sp"
-                                    />
+                                    android:textColor="#FF9CA3AF"
+                                    android:textSize="14sp" />
                                 <TextView
                                     style="@style/InputSuffixUnit"
                                     android:text="m"
                                     />
+                            </LinearLayout>
+                        </LinearLayout>
+                    </LinearLayout>
+                    <!-- 设计高程（可点击弹 Numpad） -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="2"
+                            android:orientation="horizontal">
+                            <TextView
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="设计高程"
+                                android:textColor="#FF374151"
+                                android:textSize="14sp" />
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginEnd="10dp"
+                                android:text=":"
+                                android:textColor="#FF9CA3AF"
+                                android:textSize="14sp" />
+                        </LinearLayout>
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="3"
+                            android:gravity="center_vertical|end"
+                            android:orientation="horizontal">
+
+                            <LinearLayout
+                                style="@style/InputWithSuffixContainer"
+                                android:layout_width="0dp"
+                                android:layout_height="36dp"
+                                android:layout_weight="1"
+                                android:background="#00FFFFFF">
+
+                                <TextView
+                                    android:id="@+id/tvFillCut"
+                                    style="@style/InputWithSuffixValue"
+                                    android:text="--"
+                                    android:textColor="#FF9CA3AF"
+                                    android:textSize="14sp" />
+
+                                <TextView
+                                    style="@style/InputSuffixUnit"
+                                    android:text="m" />
+
                             </LinearLayout>
                         </LinearLayout>
                     </LinearLayout>
@@ -550,7 +551,7 @@
                                 android:layout_width="0dp"
                                 android:layout_height="wrap_content"
                                 android:layout_weight="1"
-                                android:text="填挖量"
+                                android:text="设计高程"
                                 android:textColor="#FF374151"
                                 android:textSize="14sp" />
                             <TextView

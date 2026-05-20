@@ -111,13 +111,13 @@ public final class ImuAngleConverter {
         double bucketLinkAbsRad = degToRad(bucketLinkAbsDeg + cfg.imuOffsets.bucketImuOffsetDeg);
 
         // // Relative joint angles (radians).
-        // double boomRelRad = normalizeAngleRad(boomAbsRad - cabinPitchRad);
-        // double stickRelRad = normalizeAngleRad(stickAbsRad - boomAbsRad);
-        // double bucketLinkRelRad = normalizeAngleRad(bucketLinkAbsRad - stickAbsRad);
+        double boomRelRad = normalizeAngleRad(boomAbsRad - cabinPitchRad);
+        double stickRelRad = normalizeAngleRad(stickAbsRad - boomAbsRad);
+        double bucketLinkRelRad = normalizeAngleRad(bucketLinkAbsRad - stickAbsRad);
         // 不用做相对角度，每次的位置是自己的坐标系
-        double boomRelRad = normalizeAngleRad(boomAbsRad);
-        double stickRelRad = normalizeAngleRad(stickAbsRad);
-        double bucketLinkRelRad = normalizeAngleRad(bucketLinkAbsRad);
+        // double boomRelRad = normalizeAngleRad(boomAbsRad);
+        // double stickRelRad = normalizeAngleRad(stickAbsRad);
+        // double bucketLinkRelRad = normalizeAngleRad(bucketLinkAbsRad);
 
         double bucketRelRad = computeBucketAngleRad(bucketLinkAbsRad, stickAbsRad, cfg);
         if (Double.isNaN(bucketRelRad)) {

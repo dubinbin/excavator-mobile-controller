@@ -190,6 +190,13 @@
           bucket: { min: 0, max: 180 },
         };
 
+        /** Android joints.*.z — must allow 0 (avoid `joint && joint.z` falsy bug). */
+        function readJointZ(joint) {
+          if (joint == null) return undefined;
+          const z = Number(joint.z);
+          return Number.isFinite(z) ? z : undefined;
+        }
+
         const PARTS = {
           boom: {
             el: document.getElementById("boom"),
@@ -198,7 +205,7 @@
             height: 134,
             pivot: { x: 0, y: 133 },
             end: { x: 334, y: 0 },
-            labelOffset: { x: -106, y: -160 },
+            labelOffset: { x: -26, y: -150 },
           },
           stick: {
             el: document.getElementById("stick"),
@@ -361,11 +368,10 @@
 
           if (payload && payload.joints) {
             const joints = payload.joints;
-
             return {
-              boom: joints.boom && joints.boom.z,
-              stick: joints.stick && joints.stick.z,
-              bucket: joints.bucket && joints.bucket.z,
+              boom: readJointZ(joints.boom),
+              stick: readJointZ(joints.stick),
+              bucket: readJointZ(joints.bucket),
             };
           }
 

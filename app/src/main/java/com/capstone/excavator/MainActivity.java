@@ -119,6 +119,8 @@ public class MainActivity extends ScaledAppCompatActivity {
     
     // UDP相关
     private Pipeline udpPipeline;
+    /** 是否已向顶栏报告接收机链路可用（避免每包 runOnUiThread）。 */
+    private boolean receiverLinkAlive;
     private boolean useRealData = false; // 是否使用真实UDP数据
     private float realBoomAngle = 0f;
     private float realStickAngle = 0f;
@@ -280,9 +282,9 @@ public class MainActivity extends ScaledAppCompatActivity {
             }
         }
         // UDP 已连且 onPause 时停过心跳：重新拉起。startHeartbeat 内部会幂等清理旧 runnable。
-        if (udpPipeline != null && udpPipeline.isConnected()) {
+        if (udpPipeline != null && (udpPipeline.isConnected() || TcuLinkHub.isTrafficAlive())) {
             startHeartbeat();
-            setReceiverLinkConnected(true);
+            noteReceiverLinkAlive();
         } else {
             setReceiverLinkConnected(false);
         }
@@ -561,9 +563,9 @@ public class MainActivity extends ScaledAppCompatActivity {
      */
     private void handleLevelTaskRunningTransition(boolean levelRunning) {
         if (levelRunning && !levelTaskRunningPrev) {
-            // 找平任务进入运行：强制 CM 单位，必要时拍快照
             setGaugeUnit(GaugeUnit.CM);
             snapshotLevelDesignSurface();
+            refreshLevelDepthGauges();
         } else if (!levelRunning && levelTaskRunningPrev) {
             levelDesignZLocal = null;
             if (leftActivityGauge != null) leftActivityGauge.setValue(0f);
@@ -573,20 +575,31 @@ public class MainActivity extends ScaledAppCompatActivity {
     }
 
     private void snapshotLevelDesignSurface() {
-        if (!useRealData || !LevelTaskState.hasNumericValues()) {
-            // 没有真实 IMU 或没有数值时不快照，保持 null（gauge 显示 0）
+        if (!useRealData) {
+            levelDesignZLocal = null;
+            return;
+        }
+        double offsetM;
+        if (LevelTaskState.hasAcceptedTargetHeight() && LevelTaskState.hasSurveyHeight()) {
+            offsetM = LevelTaskState.getAcceptedTargetHeightM() - LevelTaskState.getSurveyHeightM();
+        } else if (LevelTaskState.hasNumericValues()) {
+            offsetM = LevelTaskState.getTargetHeightM();
+        } else {
+            levelDesignZLocal = null;
+            return;
+        }
+        if (Double.isNaN(offsetM)) {
             levelDesignZLocal = null;
             return;
         }
         double zTipNow = currentBucketTipZ();
-        double sum = LevelTaskState.getReferenceSumM();
-        if (Double.isNaN(zTipNow) || Double.isNaN(sum)) {
+        if (Double.isNaN(zTipNow)) {
             levelDesignZLocal = null;
             return;
         }
-        levelDesignZLocal = zTipNow - sum;
+        levelDesignZLocal = zTipNow - offsetM;
         Log.d("LevelGauge", "snapshot z_design=" + levelDesignZLocal
-                + " (z_tip=" + zTipNow + ", sum=" + sum + ")");
+                + " (z_tip=" + zTipNow + ", offsetM=" + offsetM + ")");
     }
 
     /**
@@ -978,9 +991,28 @@ public class MainActivity extends ScaledAppCompatActivity {
     }
 
     private void setReceiverLinkConnected(boolean connected) {
+        if (connected) {
+            receiverLinkAlive = true;
+            TcuLinkHub.setTrafficAlive(true);
+        } else {
+            receiverLinkAlive = false;
+            TcuLinkHub.setTrafficAlive(false);
+        }
         if (headerBar != null) {
             headerBar.setConnected(connected);
         }
+    }
+
+    /**
+     * UDP 无连接握手：除 onConnectSuccess 外，收到任意回包或心跳 RTT 也视为已连接。
+     */
+    private void noteReceiverLinkAlive() {
+        TcuLinkHub.setTrafficAlive(true);
+        if (receiverLinkAlive) {
+            return;
+        }
+        receiverLinkAlive = true;
+        runOnUiThread(() -> setReceiverLinkConnected(true));
     }
 
     private void setVideoConnected(boolean connected) {
@@ -1239,17 +1271,18 @@ public class MainActivity extends ScaledAppCompatActivity {
 
         // 更新挖机姿态（使用相对角度）
         if (postureCardView != null) {
+            System.out.println("MainActivity: updateAngles: rawBoom=" + rawBoom + ", rawStick=" + rawStick + ", rawBucket=" + rawBucket);
             postureCardView.setAngles(
                     rawCabinPitch,
                     rawCabinRoll,
-                    relativeBoomAngle,
-                    relativeStickAngle,
-                    relativeBucketAngle
+                    rawBoom,
+                    rawStick,
+                    rawBucket
             );
         }
         // 推送到 BottomBarView 组件
         if (bottomBar != null) {
-            bottomBar.setAngles(relativeBoomAngle, relativeStickAngle, relativeBucketAngle,
+            bottomBar.setAngles(rawBoom, rawStick, rawBucket,
                     rawCabinPitch, rawCabinRoll);
         }
         // 找平度量条：每次解算后驱动 dz = z_tip - z_design
@@ -1365,6 +1398,8 @@ public class MainActivity extends ScaledAppCompatActivity {
      * 初始化SDK
      */
     private void initSDK() {
+        // 记得改回来
+        createUDPPipeline();
         // TODO 初始化SDK,初始化一次即可
         RCSDKManager.INSTANCE.initSDK(this, new SDKManagerCallBack() {
             @Override
@@ -1374,7 +1409,7 @@ public class MainActivity extends ScaledAppCompatActivity {
                     Toast.makeText(MainActivity.this, "遥控器连接成功", Toast.LENGTH_SHORT).show();
                 });
                 // 遥控器连接成功后，创建UDP管道
-                createUDPPipeline();
+                // createUDPPipeline();
                 // 调试：拉取并打印 KeyChannelSettings / g20 通道表（mapping、行程、反向等），便于对照实机整理 mapping 整型
                 RcChannelSettingsHelper.logChannelSettingsAfterDelay(MainActivity.this, 1500);
                 // 首次连接控制器时按默认布局（ch1=铲斗, ch2=大臂, ch3=小臂, ch4=回旋）快照 mapping
@@ -1427,6 +1462,22 @@ public class MainActivity extends ScaledAppCompatActivity {
         KeyManager.INSTANCE.listen(AirLinkKey.INSTANCE.getKeySignalQuality(), keySignalQualityListener);
     }
     
+    private void bindTcuLinkHub() {
+        TcuLinkHub.setSender(new TcuLinkHub.Sender() {
+            @Override
+            public boolean isConnected() {
+                return udpPipeline != null && udpPipeline.isConnected();
+            }
+
+            @Override
+            public void write(byte[] data) {
+                if (udpPipeline != null) {
+                    udpPipeline.writeData(data);
+                }
+            }
+        });
+    }
+
     /**
      * 创建UDP管道
      */
@@ -1437,9 +1488,10 @@ public class MainActivity extends ScaledAppCompatActivity {
             udpPipeline = null;
         }
         // 创建UDP管道：本地端口14551，发送到127.0.0.1:14552
-        udpPipeline = PipelineManager.INSTANCE.createUDPPipeline(14551, "127.0.0.1", 14552);
+        udpPipeline = PipelineManager.INSTANCE.createUDPPipeline(14551, "192.168.195.130", 14552);
         
         if (udpPipeline != null) {
+            bindTcuLinkHub();
             // 设置通信监听器
             udpPipeline.setOnCommListener(new CommListener() {
                 @Override
@@ -1451,7 +1503,7 @@ public class MainActivity extends ScaledAppCompatActivity {
                             // 连接成功但不立即切换，等待收到数据后再切换
                             // useRealData 保持 false，直到收到第一个数据包
                             lastDataReceiveTime = System.currentTimeMillis();
-                            setReceiverLinkConnected(true);
+                            noteReceiverLinkAlive();
                             Toast.makeText(MainActivity.this, "UDP连接成功，等待数据...", Toast.LENGTH_SHORT).show();
                             startHeartbeat(); // 开始定时发送心跳帧测量 RTT
                         }
@@ -1482,6 +1534,9 @@ public class MainActivity extends ScaledAppCompatActivity {
                         public void run() {
                             useRealData = false; // 切换回模拟数据
                             setReceiverLinkConnected(false);
+                            TcuLinkHub.setSender(null);
+        TcuInitHandshake.reset();
+                            TcuInitHandshake.reset();
                             setSensorStatusesOffline();
                             notifyLinkLatencyMs(-1);
                             Toast.makeText(MainActivity.this, "UDP断开连接", Toast.LENGTH_SHORT).show();
@@ -1491,12 +1546,30 @@ public class MainActivity extends ScaledAppCompatActivity {
                 
                 @Override
                 public void onReadData(byte[] data) {
-                    if (data != null) {
+                    if (data != null && data.length > 0) {
+                        noteReceiverLinkAlive();
                         Log.d("UDP", "收到数据，长度: " + data.length);
 
-                        // TCU 业务帧 0x55 0xAA（如 0x51 心跳 LinkBitmap、0x50 InitBitmap）——与 33 字节实时流分离
+                        // §6.1：0x50 初始化 → 自动回 0xD0，TCU 进入主程序后才发 0xFA 实时流
+                        if (TcuInitHandshake.tryHandle(data)) {
+                            runOnUiThread(() -> {
+                                refreshHeaderImuFromTcuLinkState();
+                                if (TcuInitHandshake.isMainProgramEntered()) {
+                                    Toast.makeText(MainActivity.this,
+                                            "TCU 初始化完成，等待实时数据…",
+                                            Toast.LENGTH_SHORT).show();
+                                }
+                            });
+                            return;
+                        }
+
+                        // 0x51 链路心跳 LinkBitmap——与 33 字节实时流分离
                         if (TcuBusinessFrameParser.tryConsumeAndUpdateImuLink(data)) {
                             runOnUiThread(MainActivity.this::refreshHeaderImuFromTcuLinkState);
+                            return;
+                        }
+
+                        if (TcuBusinessCodec.isBusinessFrame(data) && TcuLinkHub.dispatch(data)) {
                             return;
                         }
 
@@ -1513,7 +1586,10 @@ public class MainActivity extends ScaledAppCompatActivity {
                             if (sendTs > 0) {
                                 int rtt = (int) (System.currentTimeMillis() - sendTs);
                                 Log.d("RTT", "收到心跳回包，RTT=" + rtt + "ms");
-                                runOnUiThread(() -> notifyLinkLatencyMs(rtt));
+                                runOnUiThread(() -> {
+                                    noteReceiverLinkAlive();
+                                    notifyLinkLatencyMs(rtt);
+                                });
                             }
                             return; // 心跳回包不进入业务数据解析
                         }
@@ -1527,6 +1603,11 @@ public class MainActivity extends ScaledAppCompatActivity {
                             IMUDataParser.parseData(data, new IMUDataParser.ParseResultCallbackV2() {
                                 @Override
                                 public void onParseSuccess(IMUDataParser.ParsedData parsed) {
+                                    Log.i("UDP", String.format(Locale.US,
+                                        "IMU boom=%.2f stick=%.2f bucket=%.2f cabinP=%.2f cabinR=%.2f enc=%.2f lat=%.9f lon=%.9f",
+                                        parsed.boomAngle, parsed.stickAngle, parsed.bucketAngle,
+                                        parsed.cabinPitchAngle, parsed.cabinRollAngle, parsed.encoderAngle,
+                                        parsed.rtkLat, parsed.rtkLon));
                                     // ????IMU?????????????
                                     realBoomAngle = parsed.boomAngle;
                                     realStickAngle = parsed.stickAngle;
@@ -1561,6 +1642,7 @@ public class MainActivity extends ScaledAppCompatActivity {
                                 }
                                 @Override
                                 public void onParseError(String error) {
+                                    System.out.println("MainActivity: onParseError: error=" + error);
                                     Log.e("UDP", "数据解析失败: " + error);
                                     runOnUiThread(() -> {
                                         useRealData = false;
@@ -1578,6 +1660,12 @@ public class MainActivity extends ScaledAppCompatActivity {
             
             // 连接UDP管道
             PipelineManager.INSTANCE.connectPipeline(udpPipeline);
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                if (udpPipeline != null && udpPipeline.isConnected()) {
+                    noteReceiverLinkAlive();
+                    startHeartbeat();
+                }
+            }, 400);
         } else {
             Log.e("UDP", "创建UDP管道失败");
             useRealData = false; // 创建失败，使用模拟数据
@@ -1732,6 +1820,8 @@ public class MainActivity extends ScaledAppCompatActivity {
             PipelineManager.INSTANCE.disconnectPipeline(udpPipeline);
             udpPipeline = null;
         }
+        TcuLinkHub.setSender(null);
+        TcuInitHandshake.reset();
         
         // 断开遥控器连接
         RCSDKManager.INSTANCE.disconnectRC();

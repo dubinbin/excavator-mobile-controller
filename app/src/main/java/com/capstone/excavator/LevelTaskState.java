@@ -1,5 +1,7 @@
 package com.capstone.excavator;
 
+import java.util.Locale;
+
 public final class LevelTaskState {
 
     public static final int REF_LEFT = 0;
@@ -17,6 +19,14 @@ public final class LevelTaskState {
     private static volatile double targetHeightM = Double.NaN;
     private static volatile double fillCutM = Double.NaN;
 
+    // ── TCU 找平会话（0x90 / 0x91 / 0xC0）────────────────────────────
+    private static volatile int surveyHeightTenthCm = Integer.MIN_VALUE;
+    private static volatile double surveyLat = Double.NaN;
+    private static volatile double surveyLon = Double.NaN;
+    private static volatile int pendingTargetHeightTenthCm = Integer.MIN_VALUE;
+    private static volatile int acceptedTargetHeightTenthCm = Integer.MIN_VALUE;
+    private static volatile boolean tcuTaskActive = false;
+
     private LevelTaskState() {
     }
 
@@ -32,6 +42,46 @@ public final class LevelTaskState {
 
         targetHeightM = parseMeters(targetHeight);
         fillCutM = parseMeters(fillCut);
+    }
+
+    public static void updateSurveyResult(int heightTenthCm, double lat, double lon) {
+        surveyHeightTenthCm = heightTenthCm;
+        surveyLat = lat;
+        surveyLon = lon;
+    }
+
+    public static void setPendingTargetHeightTenthCm(int tenthCm) {
+        pendingTargetHeightTenthCm = tenthCm;
+    }
+
+    public static void setAcceptedTargetHeightTenthCm(int tenthCm) {
+        acceptedTargetHeightTenthCm = tenthCm;
+    }
+
+    public static void setTcuTaskActive(boolean active) {
+        tcuTaskActive = active;
+    }
+
+    public static void clearTcuSession() {
+        surveyHeightTenthCm = Integer.MIN_VALUE;
+        surveyLat = Double.NaN;
+        surveyLon = Double.NaN;
+        pendingTargetHeightTenthCm = Integer.MIN_VALUE;
+        acceptedTargetHeightTenthCm = Integer.MIN_VALUE;
+        tcuTaskActive = false;
+    }
+
+    public static void resetAll() {
+        referencePoint = REF_MIDDLE;
+        heightMode = true;
+        targetHeight = "";
+        fillCut = "";
+        targetLon = "";
+        targetLat = "";
+        targetZ = "";
+        targetHeightM = Double.NaN;
+        fillCutM = Double.NaN;
+        clearTcuSession();
     }
 
     public static int getReferencePoint() {
@@ -78,29 +128,74 @@ public final class LevelTaskState {
         return targetZ;
     }
 
-    /** 桶尖到地面距离（米），无数据时返回 NaN。 */
     public static double getTargetHeightM() {
         return targetHeightM;
     }
 
-    /** 填挖量（米），通常为负，无数据返回 NaN。 */
     public static double getFillCutM() {
         return fillCutM;
     }
 
-    /**
-     * 当前参考点和（米）= 目标高度 + 填挖量，
-     * 物理含义：在「设置时刻」斗尖相对设计面的高度差。
-     */
+    /** @deprecated 设计高程请用 {@link #getDesignElevationM()}；TCU 偏移请用 {@link #getTargetHeightM()}（填挖量）。 */
     public static double getReferenceSumM() {
-        if (Double.isNaN(targetHeightM) || Double.isNaN(fillCutM)) {
-            return Double.NaN;
-        }
-        return targetHeightM + fillCutM;
+        return getDesignElevationM();
     }
 
+    /** 高度定点：至少已填「填挖量」；设计高程由 UI 自动 = 测量值 + 填挖量。 */
     public static boolean hasNumericValues() {
-        return !Double.isNaN(targetHeightM) && !Double.isNaN(fillCutM);
+        return !Double.isNaN(targetHeightM) && hasSurveyHeight();
+    }
+
+    /** 设计高程（米）= 填挖量 + 测量值，与 UI tvFillCut 一致。 */
+    public static double getDesignElevationM() {
+        if (Double.isNaN(targetHeightM) || !hasSurveyHeight()) {
+            return Double.NaN;
+        }
+        return getSurveyHeightM() + targetHeightM;
+    }
+
+    public static boolean hasSurveyHeight() {
+        return surveyHeightTenthCm != Integer.MIN_VALUE;
+    }
+
+    public static int getSurveyHeightTenthCm() {
+        return surveyHeightTenthCm;
+    }
+
+    public static double getSurveyHeightM() {
+        return hasSurveyHeight()
+                ? TcuBusinessCodec.tenthCmToMeters(surveyHeightTenthCm)
+                : Double.NaN;
+    }
+
+    public static double getSurveyLat() {
+        return surveyLat;
+    }
+
+    public static double getSurveyLon() {
+        return surveyLon;
+    }
+
+    public static boolean hasAcceptedTargetHeight() {
+        return acceptedTargetHeightTenthCm != Integer.MIN_VALUE;
+    }
+
+    /** TCU 0x91 确认的设计面高度（米）；无则 NaN。 */
+    public static double getAcceptedTargetHeightM() {
+        return hasAcceptedTargetHeight()
+                ? TcuBusinessCodec.tenthCmToMeters(acceptedTargetHeightTenthCm)
+                : Double.NaN;
+    }
+
+    public static String getAcceptedTargetHeightText() {
+        if (!hasAcceptedTargetHeight()) {
+            return "--";
+        }
+        return String.format(Locale.US, "%.3f", getAcceptedTargetHeightM());
+    }
+
+    public static boolean isTcuTaskActive() {
+        return tcuTaskActive;
     }
 
     private static int normalizeRef(int ref) {

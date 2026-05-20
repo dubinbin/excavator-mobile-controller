@@ -3,9 +3,8 @@ package com.capstone.excavator;
 /**
  * TCU ↔ 遥控器业务帧（帧头 {@code 0x55 0xAA}）解析。
  *
- * <p>与 100 ms 实时流 {@code 0xFA 0xFA} 分离；用于读取 {@code 0x51} 心跳里的 {@code LinkBitmap}
- * 以及 {@code 0x50} 初始化里的 {@code InitBitmap}，其中 <b>bit6 = IMU</b>：{@code 1} 正常，
- * {@code 0} 异常或未连接（见协议草案 §5.1 / §5.2）。
+ * <p>与 100 ms 实时流 {@code 0xFA 0xFA} 分离；用于读取 {@code 0x51} 心跳里的 {@code LinkBitmap}。
+ * {@code 0x50} 初始化由 {@link TcuInitHandshake} 处理并回复 {@code 0xD0}。
  *
  * <p>CRC：CRC-16-MODBUS，计算范围为从 {@code MsgID} 起至最后一个 {@code Data} 字节（含 {@code DataLen}），
  * 不含 CRC 自身与帧尾 {@code 0xFF}。
@@ -16,8 +15,6 @@ public final class TcuBusinessFrameParser {
     private static final int FRAME_HEAD_2 = 0xAA;
     private static final int FRAME_TAIL = 0xFF;
 
-    /** 初始化状态上报 */
-    public static final int MSG_INIT_STATUS = 0x50;
     /** 连接状态 / 心跳（1 s） */
     public static final int MSG_LINK_HEARTBEAT = 0x51;
 
@@ -28,8 +25,7 @@ public final class TcuBusinessFrameParser {
     }
 
     /**
-     * 若 {@code data} 为一条完整且 CRC 正确的业务帧，且为 {@code 0x50} 或 {@code 0x51}，
-     * 则根据位图更新 {@link ImuStatusState} 并返回 {@code true}。
+     * 若 {@code data} 为 {@code 0x51} 链路心跳，则更新 {@link ImuStatusState} 并返回 {@code true}。
      *
      * @return {@code true} 表示已消费该包（调用方不必再按 33 字节实时流解析）
      */
@@ -57,11 +53,6 @@ public final class TcuBusinessFrameParser {
             return false;
         }
 
-        if (msgId == MSG_INIT_STATUS && dataLen >= 2) {
-            int initBitmap = readUint16Be(data, 4);
-            ImuStatusState.setTcuImuLinkFromBitmap(initBitmap);
-            return true;
-        }
         if (msgId == MSG_LINK_HEARTBEAT && dataLen >= 2) {
             int linkBitmap = readUint16Be(data, 4);
             ImuStatusState.setTcuImuLinkFromBitmap(linkBitmap);

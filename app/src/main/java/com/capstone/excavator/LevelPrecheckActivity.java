@@ -27,6 +27,8 @@ public class LevelPrecheckActivity extends ScaledAppCompatActivity {
     private TextView tvPrecheckImuStatus;
     private TextView tvPrecheckImuDesc;
     private HelpTooltip helpTooltip;
+    private boolean workflowBusy;
+    private final LevelTcuWorkflow workflow = LevelTcuWorkflow.getInstance();
     private final RtkState.OnRtkChangeListener rtkChangeListener =
             (lat, lon, valid) -> runOnUiThread(this::refreshPrecheckInfo);
 
@@ -53,20 +55,13 @@ public class LevelPrecheckActivity extends ScaledAppCompatActivity {
         View help = findViewById(R.id.btnLevelHelp);
         helpTooltip = new HelpTooltip(
                 this,
-                "这里是帮助提示内容，你可以在此解释该页面的检查项含义。"
+                "确认 TCU 已接受找平参数且传感器正常后，开始作业。"
         );
         helpTooltip.attach(help);
 
-        if (btnBack != null) btnBack.setOnClickListener(v -> navigateToMain());
+        if (btnBack != null) btnBack.setOnClickListener(v -> exitAndGoMain());
         if (btnPrev != null) btnPrev.setOnClickListener(v -> finish());
-        if (btnStart != null) {
-            btnStart.setOnClickListener(v -> {
-                TaskTypeState.getInstance().setType(TaskTypeState.Type.LEVEL);
-                WorkRunState.getInstance().setState(WorkRunState.State.RUNNING);
-                Toast.makeText(this, "开始作业", Toast.LENGTH_SHORT).show();
-                startActivity(new Intent(this, MainActivity.class));
-            });
-        }
+        if (btnStart != null) btnStart.setOnClickListener(v -> confirmAndStart());
     }
 
     @Override
@@ -100,6 +95,63 @@ public class LevelPrecheckActivity extends ScaledAppCompatActivity {
         }
     }
 
+    private void confirmAndStart() {
+        if (workflowBusy) {
+            return;
+        }
+        if (workflow.getPhase().ordinal() < LevelTcuWorkflow.Phase.PARAMS_ACCEPTED.ordinal()) {
+            Toast.makeText(this, "找平参数尚未被 TCU 确认", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        setBusy(true);
+        workflow.confirmTaskStart(new LevelTcuWorkflow.StepCallback() {
+            @Override
+            public void onSuccess() {
+                setBusy(false);
+                TaskTypeState.getInstance().setType(TaskTypeState.Type.LEVEL);
+                WorkRunState.getInstance().setState(WorkRunState.State.RUNNING);
+                Toast.makeText(LevelPrecheckActivity.this, "找平任务已激活", Toast.LENGTH_SHORT).show();
+                Intent intent = new Intent(LevelPrecheckActivity.this, MainActivity.class);
+                intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                startActivity(intent);
+                finish();
+            }
+
+            @Override
+            public void onError(String message) {
+                setBusy(false);
+                Toast.makeText(LevelPrecheckActivity.this, message, Toast.LENGTH_LONG).show();
+            }
+        });
+    }
+
+    private void exitAndGoMain() {
+        workflow.cancelPending();
+        setBusy(false);
+        if (!workflow.isFeatureActive()) {
+            navigateToMain();
+            return;
+        }
+        workflow.exitFeature(new LevelTcuWorkflow.StepCallback() {
+            @Override
+            public void onSuccess() {
+                navigateToMain();
+            }
+
+            @Override
+            public void onError(String message) {
+                Toast.makeText(LevelPrecheckActivity.this, message, Toast.LENGTH_SHORT).show();
+                navigateToMain();
+            }
+        });
+    }
+
+    private void setBusy(boolean busy) {
+        workflowBusy = busy;
+        if (btnStart != null) btnStart.setEnabled(!busy);
+        if (btnPrev != null) btnPrev.setEnabled(!busy);
+    }
+
     private void refreshPrecheckInfo() {
         if (tvPrecheckRef != null) {
             tvPrecheckRef.setText("参考点: " + LevelTaskState.getReferencePointText());
@@ -118,6 +170,9 @@ public class LevelPrecheckActivity extends ScaledAppCompatActivity {
     }
 
     private String buildTargetText() {
+        if (LevelTaskState.hasAcceptedTargetHeight()) {
+            return "TCU 目标高度: " + LevelTaskState.getAcceptedTargetHeightText() + " m";
+        }
         if (LevelTaskState.isHeightMode()) {
             return "目标高度: " + valueOrPlaceholder(LevelTaskState.getTargetHeight()) + " m";
         }
@@ -167,4 +222,3 @@ public class LevelPrecheckActivity extends ScaledAppCompatActivity {
         return value == null || value.trim().isEmpty() ? "--" : value.trim();
     }
 }
-

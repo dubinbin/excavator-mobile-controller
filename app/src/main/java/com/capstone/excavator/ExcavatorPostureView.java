@@ -221,7 +221,7 @@ public class ExcavatorPostureView extends FrameLayout {
         sb.append("},stick:{z:");
         appendFloat(sb, stickAngle);
         sb.append("},bucket:{z:");
-        appendFloat(sb, bucketAngle + bucketAngleOffsetDeg);
+        appendFloat(sb, bucketAngle);
         sb.append("}}});");
         final String js = sb.toString();
         webView.post(() -> webView.evaluateJavascript(js, null));
