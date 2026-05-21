@@ -33,12 +33,12 @@ public final class ArmForwardKinematics {
                                     double boomLength,
                                     double stickLength,
                                     double bucketLength) {
-        double a1 = Math.toRadians(boomAbsDeg);
-        double a12 = Math.toRadians(stickAbsDeg);
-        double a123 = Math.toRadians(bucketAbsDeg);
-        return boomLength * Math.sin(a1)
-                + stickLength * Math.sin(a12)
-                + bucketLength * Math.sin(a123);
+        double boomAbsRad = Math.toRadians(boomAbsDeg);
+        double stickAbsRad = Math.toRadians(stickAbsDeg);
+        double bucketAbsRad = Math.toRadians(bucketAbsDeg);
+        return boomLength * Math.sin(boomAbsRad)
+                + stickLength * Math.sin(stickAbsRad)
+                + bucketLength * Math.sin(bucketAbsRad);
     }
 
     /** 同时返回 (x, z)。 */

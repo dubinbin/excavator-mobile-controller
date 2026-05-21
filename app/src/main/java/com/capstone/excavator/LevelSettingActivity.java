@@ -165,6 +165,9 @@ public class LevelSettingActivity extends ScaledAppCompatActivity {
         if (btnLevelNext != null) {
             btnLevelNext.setEnabled(true);
         }
+        if (!LevelTaskState.hasSurveyTipZLocal()) {
+            captureSurveyTipZLocal();
+        }
         applySurveyResultToUi(heightM, lat, lon);
     }
 
@@ -265,6 +268,7 @@ public class LevelSettingActivity extends ScaledAppCompatActivity {
         if (workflowBusy) {
             return;
         }
+        captureFreshSurveyTipZLocal();
         setWorkflowBusy(true, "测点中…");
         workflow.requestSurvey(selectedRef, new LevelTcuWorkflow.SurveyCallback() {
             @Override
@@ -414,9 +418,40 @@ public class LevelSettingActivity extends ScaledAppCompatActivity {
                 refreshSurveyMeasurementDisplay();
                 syncDesignElevationFromInputs();
                 cacheState();
+                updateGuidanceDesignBaselineFromInputs();
             }
         }
         refreshDepthLabel();
+    }
+
+    private void captureSurveyTipZLocal() {
+        Double zLocal = currentBucketTipZFromRealtimeImu();
+        if (zLocal == null) {
+            return;
+        }
+        LevelTaskState.setSurveyTipZLocalM(zLocal);
+        updateGuidanceDesignBaselineFromInputs();
+    }
+
+    private void captureFreshSurveyTipZLocal() {
+        LevelTaskState.clearGuidanceBaseline();
+        captureSurveyTipZLocal();
+    }
+
+    private void updateGuidanceDesignBaselineFromInputs() {
+        if (!isHeightMode || !LevelTaskState.hasSurveyTipZLocal()) {
+            return;
+        }
+        Double fillOffsetM = parseDoubleOrNull(tvTargetHeight == null ? null : tvTargetHeight.getText());
+        if (fillOffsetM == null) {
+            return;
+        }
+        LevelTaskState.setGuidanceDesignZLocalM(LevelTaskState.getSurveyTipZLocalM() + fillOffsetM);
+    }
+
+    @Nullable
+    private Double currentBucketTipZFromRealtimeImu() {
+        return ImuRealtimeState.currentBucketTipZLocalM(this);
     }
 
     /**
@@ -534,6 +569,7 @@ public class LevelSettingActivity extends ScaledAppCompatActivity {
                 Toast.makeText(this, "请先完成测点并填写填挖量", Toast.LENGTH_SHORT).show();
                 return;
             }
+            updateGuidanceDesignBaselineFromInputs();
             submitLevelParamsAndGo();
             return;
         }
@@ -586,6 +622,7 @@ public class LevelSettingActivity extends ScaledAppCompatActivity {
 
     private void runSurveyThenSubmit() {
         setWorkflowBusy(true, null);
+        captureFreshSurveyTipZLocal();
         workflow.requestSurvey(selectedRef, new LevelTcuWorkflow.SurveyCallback() {
             @Override
             public void onSurveyResult(double heightM, double lat, double lon) {

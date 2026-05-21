@@ -20,6 +20,8 @@ public final class TcuBusinessCodec {
     public static final int MSG_LEVEL_PARAMS_ACK = 0x91;
     public static final int MSG_DITCH_PARAMS = 0x20;
     public static final int MSG_DITCH_PARAMS_ACK = 0xA0;
+    public static final int MSG_SLOPE_PARAMS = 0x30;
+    public static final int MSG_SLOPE_PARAMS_ACK = 0xB0;
     public static final int MSG_TASK_CONFIRM = 0x40;
     public static final int MSG_TASK_CONFIRM_ACK = 0xC0;
     public static final int MSG_INIT_STATUS = 0x50;
@@ -36,6 +38,7 @@ public final class TcuBusinessCodec {
     public static final int POINT_REF = 0x00;
     public static final int POINT_A = 0x01;
     public static final int POINT_B = 0x02;
+    public static final int POINT_C = 0x03;
 
     public static final int RESULT_OK = 0x00;
 
@@ -139,6 +142,46 @@ public final class TcuBusinessCodec {
         return build(MSG_DITCH_PARAMS, payload);
     }
 
+    /**
+     * 修坡参数整包（§4.7）：开口线 + A'/B'/C' 点 + 坡面参数。
+     */
+    public static byte[] buildSlopeParams(
+            int openingLine,
+            double aPrimeLat, double aPrimeLon, int aPrimeHeightTenthCm,
+            double bPrimeLat, double bPrimeLon, int bPrimeHeightTenthCm,
+            double cPrimeLat, double cPrimeLon, int cPrimeHeightTenthCm,
+            int slopeRatioPermille,
+            int verticalHeightTenthCm,
+            int horizontalDistanceTenthCm,
+            int abDistanceTenthCm,
+            int abLiftDeltaTenthCm) {
+        byte[] payload = new byte[61];
+        int i = 0;
+        payload[i++] = (byte) openingLine;
+        i = writeInt40LatLon(payload, i, aPrimeLat);
+        i = writeInt40LatLon(payload, i, aPrimeLon);
+        writeInt32Be(payload, i, aPrimeHeightTenthCm);
+        i += 4;
+        i = writeInt40LatLon(payload, i, bPrimeLat);
+        i = writeInt40LatLon(payload, i, bPrimeLon);
+        writeInt32Be(payload, i, bPrimeHeightTenthCm);
+        i += 4;
+        i = writeInt40LatLon(payload, i, cPrimeLat);
+        i = writeInt40LatLon(payload, i, cPrimeLon);
+        writeInt32Be(payload, i, cPrimeHeightTenthCm);
+        i += 4;
+        writeUint16Be(payload, i, slopeRatioPermille);
+        i += 2;
+        writeInt32Be(payload, i, verticalHeightTenthCm);
+        i += 4;
+        writeInt32Be(payload, i, horizontalDistanceTenthCm);
+        i += 4;
+        writeInt32Be(payload, i, abDistanceTenthCm);
+        i += 4;
+        writeInt32Be(payload, i, abLiftDeltaTenthCm);
+        return build(MSG_SLOPE_PARAMS, payload);
+    }
+
     /** §5.1 初始化确认：{@code RetryReason} 单字节。 */
     public static byte[] buildInitConfirm(int retryReason) {
         return build(MSG_INIT_CONFIRM, new byte[]{(byte) retryReason});
@@ -225,6 +268,12 @@ public final class TcuBusinessCodec {
         dest[offset + 1] = (byte) (value >> 16);
         dest[offset + 2] = (byte) (value >> 8);
         dest[offset + 3] = (byte) value;
+    }
+
+    private static void writeUint16Be(byte[] dest, int offset, int value) {
+        int v = Math.max(0, Math.min(0xFFFF, value));
+        dest[offset] = (byte) (v >> 8);
+        dest[offset + 1] = (byte) v;
     }
 
     /** 经纬度 {@code int40} 大端编码，分辨率 {@code 1e-9 deg}。 */

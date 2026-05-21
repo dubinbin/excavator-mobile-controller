@@ -21,7 +21,7 @@ import java.util.Locale;
 /**
  * Header bar component.
  *
- * Props in  : setMode(String), setConnected(boolean)（接收机 UDP 链路）, setLinkLatencyMs(int)
+ * Props in: setMode(String), setConnected(boolean)（接收机 UDP 链路）, setLinkLatencyMs(int)
  * Self-driven: clock; system battery level via {@link Intent#ACTION_BATTERY_CHANGED}
  *
  * Usage in XML:

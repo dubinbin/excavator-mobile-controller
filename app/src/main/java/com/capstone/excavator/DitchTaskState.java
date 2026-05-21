@@ -43,9 +43,11 @@ public final class DitchTaskState {
     private static volatile int surveyAHeightTenthCm = Integer.MIN_VALUE;
     private static volatile double surveyALat = Double.NaN;
     private static volatile double surveyALon = Double.NaN;
+    private static volatile double surveyATipZLocalM = Double.NaN;
     private static volatile int surveyBHeightTenthCm = Integer.MIN_VALUE;
     private static volatile double surveyBLat = Double.NaN;
     private static volatile double surveyBLon = Double.NaN;
+    private static volatile double surveyBTipZLocalM = Double.NaN;
 
     private static volatile String longitudinalParam1 = "";
     private static volatile String longitudinalParam2 = "";
@@ -55,6 +57,7 @@ public final class DitchTaskState {
     private static volatile String sideParam2 = "";
     private static volatile String sideParam3 = "";
     private static volatile String sideParam4 = "";
+    private static volatile double guidanceDesignZLocalM = Double.NaN;
 
     private static volatile boolean tcuParamsAccepted;
     private static volatile boolean tcuTaskActive;
@@ -93,6 +96,7 @@ public final class DitchTaskState {
         targetHeightAM = parseMeters(targetHeightA);
         fillCutAM = parseMeters(fillCutA);
         fillCutCoordAM = parseMeters(fillCutCoordA);
+        recomputeGuidanceDesignZLocal();
     }
 
     public static void updatePointB(
@@ -111,6 +115,7 @@ public final class DitchTaskState {
         targetHeightBM = parseMeters(targetHeightB);
         fillCutBM = parseMeters(fillCutB);
         fillCutCoordBM = parseMeters(fillCutCoordB);
+        recomputeGuidanceDesignZLocal();
     }
 
     public static void updateSurveyA(int heightTenthCm, double lat, double lon) {
@@ -120,6 +125,7 @@ public final class DitchTaskState {
         if (!abDistanceManual) {
             recomputeAbDistance();
         }
+        recomputeGuidanceDesignZLocal();
     }
 
     public static void updateSurveyB(int heightTenthCm, double lat, double lon) {
@@ -129,6 +135,16 @@ public final class DitchTaskState {
         if (!abDistanceManual) {
             recomputeAbDistance();
         }
+        recomputeGuidanceDesignZLocal();
+    }
+
+    public static void setSurveyTipZLocal(int pointId, double zLocalM) {
+        if (pointId == TcuBusinessCodec.POINT_A) {
+            surveyATipZLocalM = zLocalM;
+        } else if (pointId == TcuBusinessCodec.POINT_B) {
+            surveyBTipZLocalM = zLocalM;
+        }
+        recomputeGuidanceDesignZLocal();
     }
 
     public static void recomputeAbDistance() {
@@ -153,6 +169,7 @@ public final class DitchTaskState {
         sideParam2 = safe(param2);
         sideParam3 = safe(param3);
         sideParam4 = safe(param4);
+        recomputeGuidanceDesignZLocal();
     }
 
     public static void setTcuParamsAccepted(boolean accepted) {
@@ -167,12 +184,16 @@ public final class DitchTaskState {
         surveyAHeightTenthCm = Integer.MIN_VALUE;
         surveyALat = Double.NaN;
         surveyALon = Double.NaN;
+        surveyATipZLocalM = Double.NaN;
+        recomputeGuidanceDesignZLocal();
     }
 
     public static void clearSurveyB() {
         surveyBHeightTenthCm = Integer.MIN_VALUE;
         surveyBLat = Double.NaN;
         surveyBLon = Double.NaN;
+        surveyBTipZLocalM = Double.NaN;
+        recomputeGuidanceDesignZLocal();
     }
 
     public static void clearTcuSession() {
@@ -213,6 +234,7 @@ public final class DitchTaskState {
         sideParam2 = "";
         sideParam3 = "";
         sideParam4 = "";
+        guidanceDesignZLocalM = Double.NaN;
         clearTcuSession();
     }
 
@@ -289,7 +311,82 @@ public final class DitchTaskState {
     }
 
     public static boolean hasGuidanceDesignData() {
-        return !Double.isNaN(getGuidanceFillOffsetM());
+        return hasGuidanceDesignZLocal() || !Double.isNaN(getGuidanceFillOffsetM());
+    }
+
+    public static double getGuidanceTrenchBottomElevationM() {
+        double design = getGuidanceDesignElevationM();
+        Double depth = parseMeters(sideParam3);
+        if (Double.isNaN(design) || depth == null || Double.isNaN(depth)) {
+            return Double.NaN;
+        }
+        return design - depth;
+    }
+
+    public static boolean hasGuidanceDesignZLocal() {
+        return !Double.isNaN(guidanceDesignZLocalM);
+    }
+
+    public static double getGuidanceDesignZLocalM() {
+        return guidanceDesignZLocalM;
+    }
+
+    private static void recomputeGuidanceDesignZLocal() {
+        Double depthM = parseMeters(sideParam3);
+        if (depthM == null || Double.isNaN(depthM)) {
+            guidanceDesignZLocalM = Double.NaN;
+            return;
+        }
+        double sum = 0.0;
+        int count = 0;
+        Double a = computeGuidancePointDesignZLocal(
+                surveyATipZLocalM,
+                hasSurveyA(),
+                getSurveyAHeightM(),
+                targetHeightAM,
+                fillCutCoordAM,
+                depthM);
+        if (a != null && !Double.isNaN(a)) {
+            sum += a;
+            count++;
+        }
+        Double b = computeGuidancePointDesignZLocal(
+                surveyBTipZLocalM,
+                hasSurveyB(),
+                getSurveyBHeightM(),
+                targetHeightBM,
+                fillCutCoordBM,
+                depthM);
+        if (b != null && !Double.isNaN(b)) {
+            sum += b;
+            count++;
+        }
+        guidanceDesignZLocalM = count > 0 ? sum / count : Double.NaN;
+    }
+
+    private static Double computeGuidancePointDesignZLocal(
+            double surveyTipZLocalM,
+            boolean hasSurvey,
+            double surveyHeightM,
+            double targetHeightM,
+            double coordFillOffsetM,
+            double depthM) {
+        if (Double.isNaN(surveyTipZLocalM)) {
+            return null;
+        }
+        double verticalOffsetM;
+        if (heightMode) {
+            if (!hasSurvey || Double.isNaN(surveyHeightM) || Double.isNaN(targetHeightM)) {
+                return null;
+            }
+            verticalOffsetM = targetHeightM - surveyHeightM;
+        } else {
+            if (Double.isNaN(coordFillOffsetM)) {
+                return null;
+            }
+            verticalOffsetM = coordFillOffsetM;
+        }
+        return surveyTipZLocalM + verticalOffsetM - depthM;
     }
 
     public static boolean isPointAReady() {

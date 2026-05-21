@@ -19,6 +19,8 @@ public final class LevelTaskState {
     private static volatile double targetHeightM = Double.NaN;
     private static volatile double fillCutM = Double.NaN;
     private static volatile double targetZM = Double.NaN;
+    private static volatile double surveyTipZLocalM = Double.NaN;
+    private static volatile double guidanceDesignZLocalM = Double.NaN;
 
     // ── TCU 找平会话（0x90 / 0x91 / 0xC0）────────────────────────────
     private static volatile int surveyHeightTenthCm = Integer.MIN_VALUE;
@@ -71,6 +73,7 @@ public final class LevelTaskState {
         pendingTargetHeightTenthCm = Integer.MIN_VALUE;
         acceptedTargetHeightTenthCm = Integer.MIN_VALUE;
         tcuTaskActive = false;
+        clearGuidanceBaseline();
     }
 
     public static void resetAll() {
@@ -84,6 +87,7 @@ public final class LevelTaskState {
         targetHeightM = Double.NaN;
         fillCutM = Double.NaN;
         targetZM = Double.NaN;
+        clearGuidanceBaseline();
         clearTcuSession();
     }
 
@@ -142,6 +146,35 @@ public final class LevelTaskState {
     /** 坐标定点：用户输入的设计高程（米），对应 tvCoordZ。 */
     public static double getTargetZM() {
         return targetZM;
+    }
+
+    public static void setSurveyTipZLocalM(double zLocalM) {
+        surveyTipZLocalM = zLocalM;
+    }
+
+    public static boolean hasSurveyTipZLocal() {
+        return !Double.isNaN(surveyTipZLocalM);
+    }
+
+    public static double getSurveyTipZLocalM() {
+        return surveyTipZLocalM;
+    }
+
+    public static void setGuidanceDesignZLocalM(double zLocalM) {
+        guidanceDesignZLocalM = zLocalM;
+    }
+
+    public static boolean hasGuidanceDesignZLocal() {
+        return !Double.isNaN(guidanceDesignZLocalM);
+    }
+
+    public static double getGuidanceDesignZLocalM() {
+        return guidanceDesignZLocalM;
+    }
+
+    public static void clearGuidanceBaseline() {
+        surveyTipZLocalM = Double.NaN;
+        guidanceDesignZLocalM = Double.NaN;
     }
 
     /** @deprecated 设计高程请用 {@link #getDesignElevationM()}；TCU 偏移请用 {@link #getTargetHeightM()}（填挖量）。 */

@@ -34,6 +34,8 @@ public class SlopeRepairPrecheckActivity extends ScaledAppCompatActivity {
     private TextView tvPrecheckImuStatus;
     private TextView tvPrecheckImuDesc;
     private HelpTooltip helpTooltip;
+    private boolean workflowBusy;
+    private final SlopeRepairTcuWorkflow workflow = SlopeRepairTcuWorkflow.getInstance();
     private final RtkState.OnRtkChangeListener rtkChangeListener =
             (lat, lon, valid) -> runOnUiThread(this::refreshPrecheckInfo);
 
@@ -77,13 +79,7 @@ public class SlopeRepairPrecheckActivity extends ScaledAppCompatActivity {
         }
         SlopeRepairStepNavigation.bindStepBar(this);
         if (btnStart != null) {
-            btnStart.setOnClickListener(v -> {
-                TaskTypeState.getInstance().setType(TaskTypeState.Type.SLOPE);
-                WorkRunState.getInstance().setState(WorkRunState.State.RUNNING);
-                Toast.makeText(this, "开始作业", Toast.LENGTH_SHORT).show();
-                startActivity(new Intent(this, MainActivity.class));
-                SlopeRepairTaskState.reset();
-            });
+            btnStart.setOnClickListener(v -> confirmTaskStart());
         }
     }
 
@@ -171,6 +167,43 @@ public class SlopeRepairPrecheckActivity extends ScaledAppCompatActivity {
         }
     }
 
+    private void confirmTaskStart() {
+        if (workflowBusy) {
+            return;
+        }
+        if (!SlopeRepairTaskState.isTcuParamsAccepted()) {
+            Toast.makeText(this, "修坡参数尚未被 TCU 确认", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        setBusy(true);
+        workflow.confirmTaskStart(new SlopeRepairTcuWorkflow.StepCallback() {
+            @Override
+            public void onSuccess() {
+                setBusy(false);
+                TaskTypeState.getInstance().setType(TaskTypeState.Type.SLOPE);
+                WorkRunState.getInstance().setState(WorkRunState.State.RUNNING);
+                Toast.makeText(SlopeRepairPrecheckActivity.this, "开始作业", Toast.LENGTH_SHORT).show();
+                startActivity(new Intent(SlopeRepairPrecheckActivity.this, MainActivity.class));
+            }
+
+            @Override
+            public void onError(String message) {
+                setBusy(false);
+                Toast.makeText(SlopeRepairPrecheckActivity.this, message, Toast.LENGTH_LONG).show();
+            }
+        });
+    }
+
+    private void setBusy(boolean busy) {
+        workflowBusy = busy;
+        if (btnStart != null) {
+            btnStart.setEnabled(!busy);
+        }
+        if (btnPrev != null) {
+            btnPrev.setEnabled(!busy);
+        }
+    }
+
     private static void setText(TextView textView, String value) {
         if (textView != null) {
             textView.setText(value);
@@ -185,4 +218,3 @@ public class SlopeRepairPrecheckActivity extends ScaledAppCompatActivity {
         return valueOrPlaceholder(value) + " m";
     }
 }
-

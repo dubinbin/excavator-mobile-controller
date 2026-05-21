@@ -5,6 +5,8 @@ import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
 
+import java.util.Random;
+
 /**
  * 找平 / 挖沟作业引导 UI：左右竖条度量、左右速度方向卡、设计面快照与填挖量刷新。
  * MainActivity 在 LEVEL 或 DITCH 任务 RUNNING 时调用 {@link #onGuidanceRunningChanged}。
@@ -13,12 +15,13 @@ public final class LevelTaskGuidanceController {
 
     private static final String TAG = "LevelGauge";
 
-    /** 坡面任务样式边距（dp） */
+    /** 坡面任务时候距离 左边的样式边距（dp） */
     private static final float MARGIN_SLOPE_TASK_DP = 80.44f;
-    /** 默认样式边距（dp） */
+
+    /** 默认时候距离 左边的样式边距（dp） */
     private static final float MARGIN_DEFAULT_DP = 28.44f;
 
-    /** 竖条槽数 */
+    /** 竖条槽 格数 */
     private static final int GAUGE_SLOTS_PER_HALF = 19;
 
     /** 度量单位 */
@@ -40,11 +43,13 @@ public final class LevelTaskGuidanceController {
         }
     }
 
-    private final GaugeUnitConfig gaugeUnitConfig = new GaugeUnitConfig(3f, 3f);
+    private final GaugeUnitConfig gaugeUnitConfig = new GaugeUnitConfig(5f, 3f);
     private GaugeUnit currentGaugeUnit = GaugeUnit.CM;
 
     private VerticalSpectrumGaugeView leftActivityGauge;
     private VerticalSpectrumGaugeView rightActivityGauge;
+    private SingleBarGaugeView leftSlopeGauge;
+    private SingleBarGaugeView rightSlopeGauge;
     private SpeedDirectionIndicatorView leftSpeedIndicator;
     private SpeedDirectionIndicatorView rightSpeedIndicator;
 
@@ -68,7 +73,7 @@ public final class LevelTaskGuidanceController {
     /** 速度方向卡阈值（厘米） */
     private static final float GAUGE_DIR_THRESHOLD_CM = 0.5f;
     /** 找平度量条最大值（厘米） */
-    private static final float LEVEL_DEPTH_CLAMP_CM = 120f;
+    private static final float LEVEL_DEPTH_CLAMP_CM = 200f;
     /** 找平度量条平滑因子 */
     private static final float LEVEL_DEPTH_EMA_ALPHA = 0.35f;
     /** 找平度量条平滑值 */
@@ -78,6 +83,9 @@ public final class LevelTaskGuidanceController {
 
     /** 视图绑定标志 */
     private boolean viewsBound;
+    private final Random mockTipHeightRandom = new Random();
+    private double mockTipHeightM = Double.NaN;
+    private double mockLocalTipZRefM = Double.NaN;
 
     /** 设置 IMU 角度配置 */
     public void setImuAngleConfig(ImuAngleConverter.Config config) {
@@ -101,6 +109,10 @@ public final class LevelTaskGuidanceController {
         if (rightActivityGauge == null) {
             rightActivityGauge = activity.findViewById(R.id.rightActivityGauge);
         }
+        VerticalActivityPanelView leftSlopePanel = activity.findViewById(R.id.verticalActivityPanelLeft);
+        VerticalActivityPanelView rightSlopePanel = activity.findViewById(R.id.verticalActivityPanelRight);
+        leftSlopeGauge = leftSlopePanel == null ? null : leftSlopePanel.getGauge();
+        rightSlopeGauge = rightSlopePanel == null ? null : rightSlopePanel.getGauge();
         applyGaugeUnitToViews();
         viewsBound = true;
     }
@@ -130,12 +142,14 @@ public final class LevelTaskGuidanceController {
             setGaugeUnit(GaugeUnit.CM);
             resetLevelDepthSmoothing();
             designZLocal = null;
+            resetMockTipHeight();
             // 推迟到首次 setImuAngles 之后快照，避免任务刚激活时角度仍为 0°
             pendingDesignSnapshot = true;
             refresh(useRealData);
         } else if (!guidanceRunning && guidanceRunningPrev) {
             activeGuidanceTask = TaskTypeState.Type.NONE;
             designZLocal = null;
+            resetMockTipHeight();
             pendingDesignSnapshot = false;
             resetLevelDepthSmoothing();
             if (leftActivityGauge != null) {
@@ -143,6 +157,12 @@ public final class LevelTaskGuidanceController {
             }
             if (rightActivityGauge != null) {
                 rightActivityGauge.setValue(0f);
+            }
+            if (leftSlopeGauge != null) {
+                leftSlopeGauge.setValue(0f);
+            }
+            if (rightSlopeGauge != null) {
+                rightSlopeGauge.setValue(0f);
             }
 
         
@@ -184,59 +204,69 @@ public final class LevelTaskGuidanceController {
             designZLocal = null;
             return false;
         }
-        double zTipNow = currentBucketTipZ();
-        if (Double.isNaN(zTipNow)) {
-            designZLocal = null;
-            return false;
-        }
         if (activeGuidanceTask == TaskTypeState.Type.DITCH) {
-            snapshotDitchDesignSurface(zTipNow);
+            snapshotDitchDesignSurface();
             return designZLocal != null;
         }
         if (activeGuidanceTask == TaskTypeState.Type.LEVEL) {
-            snapshotLevelDesignSurface(zTipNow);
+            snapshotLevelDesignSurface();
+            return designZLocal != null;
+        }
+        if (activeGuidanceTask == TaskTypeState.Type.SLOPE) {
+            snapshotSlopeDesignSurface();
             return designZLocal != null;
         }
         designZLocal = null;
         return false;
     }
 
-    private void snapshotLevelDesignSurface(double zTipNow) {
-        double offsetM;
-        if (LevelTaskState.hasAcceptedTargetHeight() && LevelTaskState.hasSurveyHeight()) {
-            offsetM = LevelTaskState.getAcceptedTargetHeightM() - LevelTaskState.getSurveyHeightM();
-        } else if (LevelTaskState.hasNumericValues()) {
-            offsetM = LevelTaskState.getTargetHeightM();
-        } else {
+    private void snapshotLevelDesignSurface() {
+        designZLocal = resolveLevelDesignElevationM();
+        if (designZLocal == null || Double.isNaN(designZLocal)) {
             designZLocal = null;
             return;
         }
-        if (Double.isNaN(offsetM)) {
-            designZLocal = null;
-            return;
-        }
-        designZLocal = zTipNow - offsetM;
-        Log.d(TAG, "level snapshot z_design=" + designZLocal
-                + " (z_tip=" + zTipNow + ", offsetM=" + offsetM + ")");
+        Log.d(TAG, "level snapshot design_elevation=" + designZLocal
+                + " (tipHeightSource=" + currentTipHeightSource() + ")");
     }
 
-    private void snapshotDitchDesignSurface(double zTipNow) {
-        if (!DitchTaskState.hasGuidanceDesignData()) {
+    private void snapshotDitchDesignSurface() {
+        double trenchBottom = DitchTaskState.getGuidanceTrenchBottomElevationM();
+        if (Double.isNaN(trenchBottom)) {
             designZLocal = null;
             return;
         }
-        double offsetM = DitchTaskState.getGuidanceFillOffsetM();
-        if (Double.isNaN(offsetM)) {
+        designZLocal = trenchBottom;
+        Log.d(TAG, "ditch snapshot trench_bottom_elevation=" + designZLocal
+                + " (heightMode=" + DitchTaskState.isHeightMode()
+                + ", tipHeightSource=" + currentTipHeightSource() + ")");
+    }
+
+    private void snapshotSlopeDesignSurface() {
+        double design = SlopeRepairTaskState.getGuidanceDesignElevationM();
+        if (Double.isNaN(design)) {
             designZLocal = null;
             return;
         }
-        designZLocal = zTipNow - offsetM;
-        Log.d(TAG, "ditch snapshot z_design=" + designZLocal
-                + " (z_tip=" + zTipNow + ", offsetM=" + offsetM
-                + ", heightMode=" + DitchTaskState.isHeightMode() + ")");
+        designZLocal = design;
+        Log.d(TAG, "slope snapshot design_elevation=" + designZLocal
+                + " (tipHeightSource=" + currentTipHeightSource() + ")");
     }
 
     private double currentBucketTipZ() {
+        double localTipZ = currentBucketTipLocalZ();
+        if (Double.isNaN(localTipZ)) {
+            return Double.NaN;
+        }
+        if (BucketTipHeightState.hasTipHeight()) {
+            mockTipHeightM = Double.NaN;
+            mockLocalTipZRefM = Double.NaN;
+            return BucketTipHeightState.getTipHeightM();
+        }
+        return mockBucketTipHeightM(localTipZ);
+    }
+
+    private double currentBucketTipLocalZ() {
         if (imuAngleConfig == null) {
             return Double.NaN;
         }
@@ -257,6 +287,37 @@ public final class LevelTaskGuidanceController {
                 ImuPreferences.lengthMmToMeters(dim.bucketLength));
     }
 
+    private double mockBucketTipHeightM(double localTipZ) {
+        if (Double.isNaN(mockTipHeightM)) {
+            double design = designZLocal != null && !Double.isNaN(designZLocal) ? designZLocal : 0.0;
+            mockTipHeightM = design + (mockTipHeightRandom.nextDouble() - 0.5) * 1.2;
+            mockLocalTipZRefM = localTipZ;
+            return mockTipHeightM;
+        }
+        double localDelta = localTipZ - mockLocalTipZRefM;
+        double jitterM = (mockTipHeightRandom.nextDouble() - 0.5) * 0.015;
+        return mockTipHeightM + localDelta + jitterM;
+    }
+
+    private void resetMockTipHeight() {
+        mockTipHeightM = Double.NaN;
+        mockLocalTipZRefM = Double.NaN;
+    }
+
+    private String currentTipHeightSource() {
+        return BucketTipHeightState.hasTipHeight() ? "TCU_TIP_HEIGHT" : "MOCK_TIP_HEIGHT";
+    }
+
+    private Double resolveLevelDesignElevationM() {
+        if (LevelTaskState.hasAcceptedTargetHeight()) {
+            return LevelTaskState.getAcceptedTargetHeightM();
+        }
+        if (LevelTaskState.isHeightMode()) {
+            return LevelTaskState.getDesignElevationM();
+        }
+        return LevelTaskState.getTargetZM();
+    }
+
     /** 刷新度量条与速度方向卡 */
     private void refresh(boolean useRealData) {
         /** 视图绑定标志 */
@@ -264,6 +325,7 @@ public final class LevelTaskGuidanceController {
             return;
         }
         if (leftActivityGauge == null && rightActivityGauge == null
+                && leftSlopeGauge == null && rightSlopeGauge == null
                 && leftSpeedIndicator == null && rightSpeedIndicator == null) {
             return;
         }
@@ -282,16 +344,24 @@ public final class LevelTaskGuidanceController {
             if (rightActivityGauge != null) {
                 rightActivityGauge.setValue(0f);
             }
+            if (leftSlopeGauge != null) {
+                leftSlopeGauge.setValue(0f);
+            }
+            if (rightSlopeGauge != null) {
+                rightSlopeGauge.setValue(0f);
+            }
             applySpeedIndicators(0f);
             return;
         }
-        /** 当前斗尖 Z 值 核心调用方法 */
+        /** 当前斗尖高程 核心调用方法 */
         double zTipNow = currentBucketTipZ();
         if (Double.isNaN(zTipNow)) {
             return;
         }
-        /** 计算当前斗尖 Z 值与设计面基准值的差值 */
-        System.out.println("LevelTaskGuidanceController: refresh: zTipNow=" + zTipNow + ", designZLocal=" + designZLocal);
+        /** 计算当前斗尖高程与设计面高程的差值 */
+        System.out.println("LevelTaskGuidanceController: refresh: tipHeight=" + zTipNow
+                + ", designElevation=" + designZLocal
+                + ", source=" + currentTipHeightSource());
         float rawValue;
         if (currentGaugeUnit == GaugeUnit.CM) {
             rawValue = (float) ((zTipNow - designZLocal) * 100.0);
@@ -306,6 +376,12 @@ public final class LevelTaskGuidanceController {
         if (rightActivityGauge != null) {
             rightActivityGauge.setValue(value);
         }
+        if (leftSlopeGauge != null) {
+            leftSlopeGauge.setValue(value);
+        }
+        if (rightSlopeGauge != null) {
+            rightSlopeGauge.setValue(value);
+        }
         applySpeedIndicators(value);
     }
 
@@ -315,6 +391,12 @@ public final class LevelTaskGuidanceController {
         }
         if (rightActivityGauge != null) {
             rightActivityGauge.setValue(0f);
+        }
+        if (leftSlopeGauge != null) {
+            leftSlopeGauge.setValue(0f);
+        }
+        if (rightSlopeGauge != null) {
+            rightSlopeGauge.setValue(0f);
         }
         applySpeedIndicators(0f);
     }
@@ -353,6 +435,14 @@ public final class LevelTaskGuidanceController {
         if (rightActivityGauge != null) {
             rightActivityGauge.setRangeMax(range);
             rightActivityGauge.setValue(0f);
+        }
+        if (leftSlopeGauge != null) {
+            leftSlopeGauge.setRangeMax(range);
+            leftSlopeGauge.setValue(0f);
+        }
+        if (rightSlopeGauge != null) {
+            rightSlopeGauge.setRangeMax(range);
+            rightSlopeGauge.setValue(0f);
         }
     }
 

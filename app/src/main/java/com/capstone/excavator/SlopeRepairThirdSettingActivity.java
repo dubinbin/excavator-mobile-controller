@@ -19,6 +19,8 @@ public class SlopeRepairThirdSettingActivity extends ScaledAppCompatActivity {
 
     private HelpTooltip helpTooltip;
     private NumpadView numpad;
+    private boolean workflowBusy;
+    private final SlopeRepairTcuWorkflow workflow = SlopeRepairTcuWorkflow.getInstance();
 
     private LinearLayout cardRefLeftC, cardRefMiddleC, cardRefRightC;
     private TextView tvRefLeftC, tvRefMiddleC, tvRefRightC;
@@ -46,6 +48,24 @@ public class SlopeRepairThirdSettingActivity extends ScaledAppCompatActivity {
         setupInputs();
         setupActions();
         SlopeRepairStepNavigation.bindStepBar(this);
+        if (!SlopeRepairTaskState.hasSurvey(TcuBusinessCodec.POINT_C)) {
+            requestSurveyForSelectedRef();
+        }
+    }
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        SlopeRepairTcuWorkflow.setSurveyStoredListener(this::onSurveyStoredFromTcu);
+    }
+
+    @Override
+    protected void onStop() {
+        saveCurrentState();
+        SlopeRepairTcuWorkflow.setSurveyStoredListener(null);
+        super.onStop();
+        if (helpTooltip != null) helpTooltip.dismiss();
+        if (numpad != null && numpad.isShowing()) numpad.dismiss();
     }
 
     private void bindViews() {
@@ -95,6 +115,9 @@ public class SlopeRepairThirdSettingActivity extends ScaledAppCompatActivity {
     private void setRefC(int index) {
         selectedRefC = index;
         applyRefSelectionC();
+        saveCurrentState();
+        SlopeRepairTaskState.clearSurvey(TcuBusinessCodec.POINT_C);
+        requestSurveyForSelectedRef();
     }
 
     private void applyRefSelectionC() {
@@ -180,8 +203,98 @@ public class SlopeRepairThirdSettingActivity extends ScaledAppCompatActivity {
         if (btnNext != null) {
             btnNext.setOnClickListener(v -> {
                 saveCurrentState();
-                SlopeRepairStepNavigation.goToNext(this);
+                submitParamsAndGoPrecheck();
             });
+        }
+    }
+
+    private void requestSurveyForSelectedRef() {
+        if (workflowBusy) {
+            return;
+        }
+        if (workflow.getPhase() == SlopeRepairTcuWorkflow.Phase.IDLE) {
+            setWorkflowBusy(true);
+            workflow.enterFeature(new SlopeRepairTcuWorkflow.StepCallback() {
+                @Override
+                public void onSuccess() {
+                    runSurveyC();
+                }
+
+                @Override
+                public void onError(String message) {
+                    setWorkflowBusy(false);
+                    Toast.makeText(SlopeRepairThirdSettingActivity.this, message, Toast.LENGTH_LONG).show();
+                }
+            });
+            return;
+        }
+        runSurveyC();
+    }
+
+    private void runSurveyC() {
+        setWorkflowBusy(true);
+        workflow.requestSurvey(TcuBusinessCodec.POINT_C, selectedRefC, new SlopeRepairTcuWorkflow.SurveyCallback() {
+            @Override
+            public void onSurveyResult(double heightM, double lat, double lon) {
+                onSurveyStoredFromTcu(TcuBusinessCodec.POINT_C, heightM, lat, lon);
+            }
+
+            @Override
+            public void onSuccess() {
+                setWorkflowBusy(false);
+                Toast.makeText(SlopeRepairThirdSettingActivity.this, "C 点测点成功", Toast.LENGTH_SHORT).show();
+            }
+
+            @Override
+            public void onError(String message) {
+                setWorkflowBusy(false);
+                Toast.makeText(SlopeRepairThirdSettingActivity.this, message, Toast.LENGTH_LONG).show();
+            }
+        });
+    }
+
+    private void onSurveyStoredFromTcu(int pointId, double heightM, double lat, double lon) {
+        if (pointId == TcuBusinessCodec.POINT_C) {
+            setWorkflowBusy(false);
+        }
+    }
+
+    private void submitParamsAndGoPrecheck() {
+        if (workflowBusy) {
+            return;
+        }
+        if (!SlopeRepairTaskState.hasSurvey(TcuBusinessCodec.POINT_C)) {
+            requestSurveyForSelectedRef();
+            return;
+        }
+        if (!SlopeRepairTaskState.canSubmitSlopeParams()) {
+            Toast.makeText(this, "请完成 A/B/C 点与坡比、垂高、平距", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (SlopeRepairTaskState.isTcuParamsAccepted()) {
+            SlopeRepairStepNavigation.goToNext(this);
+            return;
+        }
+        setWorkflowBusy(true);
+        workflow.submitSlopeParams(new SlopeRepairTcuWorkflow.StepCallback() {
+            @Override
+            public void onSuccess() {
+                setWorkflowBusy(false);
+                SlopeRepairStepNavigation.goToNext(SlopeRepairThirdSettingActivity.this);
+            }
+
+            @Override
+            public void onError(String message) {
+                setWorkflowBusy(false);
+                Toast.makeText(SlopeRepairThirdSettingActivity.this, message, Toast.LENGTH_LONG).show();
+            }
+        });
+    }
+
+    private void setWorkflowBusy(boolean busy) {
+        workflowBusy = busy;
+        if (btnNext != null) {
+            btnNext.setEnabled(!busy);
         }
     }
 
@@ -206,14 +319,6 @@ public class SlopeRepairThirdSettingActivity extends ScaledAppCompatActivity {
     }
 
     @Override
-    protected void onStop() {
-        saveCurrentState();
-        super.onStop();
-        if (helpTooltip != null) helpTooltip.dismiss();
-        if (numpad != null && numpad.isShowing()) numpad.dismiss();
-    }
-
-    @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
         if (hasFocus) setFullScreenMode();
@@ -230,4 +335,3 @@ public class SlopeRepairThirdSettingActivity extends ScaledAppCompatActivity {
         }
     }
 }
-

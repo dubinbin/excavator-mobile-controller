@@ -422,6 +422,7 @@ abstract class DitchPointSettingActivity extends ScaledAppCompatActivity {
         if (btnNext != null) {
             btnNext.setEnabled(true);
         }
+        captureSurveyTipZLocalIfAvailable();
         refreshSurveyMeasurementDisplay();
         syncFillCutFromTargetHeight();
         cachePointFields();
@@ -521,6 +522,7 @@ abstract class DitchPointSettingActivity extends ScaledAppCompatActivity {
 
     private void runSurveyThenProceed() {
         setWorkflowBusy(true);
+        captureFreshSurveyTipZLocal();
         requestSurveyInternal(new DitchTcuWorkflow.SurveyCallback() {
             @Override
             public void onSurveyResult(double heightM, double lat, double lon) {
@@ -548,6 +550,7 @@ abstract class DitchPointSettingActivity extends ScaledAppCompatActivity {
             return;
         }
         setWorkflowBusy(true);
+        captureFreshSurveyTipZLocal();
         requestSurveyInternal(new DitchTcuWorkflow.SurveyCallback() {
             @Override
             public void onSurveyResult(double heightM, double lat, double lon) {
@@ -575,6 +578,19 @@ abstract class DitchPointSettingActivity extends ScaledAppCompatActivity {
         } else {
             workflow.requestSurveyB(selectedRef, callback);
         }
+    }
+
+    private void captureFreshSurveyTipZLocal() {
+        clearSurveyForThisPoint();
+        captureSurveyTipZLocalIfAvailable();
+    }
+
+    private void captureSurveyTipZLocalIfAvailable() {
+        Double zLocal = ImuRealtimeState.currentBucketTipZLocalM(this);
+        if (zLocal == null) {
+            return;
+        }
+        DitchTaskState.setSurveyTipZLocal(getSurveyPointId(), zLocal);
     }
 
     private boolean hasSurveyForThisPoint() {
