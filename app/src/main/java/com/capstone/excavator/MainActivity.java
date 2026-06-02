@@ -382,7 +382,7 @@ public class MainActivity extends ScaledAppCompatActivity {
         
 
         bottomBar.setOnTrenchListener(() -> {
-            startActivity(new android.content.Intent(this, DitchSettingActivity.class));
+            startActivity(new android.content.Intent(this, ExcavatorWebAppActivity.class));
         });
 
         bottomBar.setOnSlopeListener(() -> {
