@@ -13,6 +13,36 @@
         android:paddingHorizontal="2dp"
         android:paddingVertical="2dp">
 
+
+        <LinearLayout
+            android:id="@+id/motion_mode_row2"
+            style="@style/MotionModeRow">
+
+            <View
+                android:id="@+id/motion_mode_dot2"
+                style="@style/MotionModeDot" />
+
+            <TextView
+                android:id="@+id/motion_mode_label2"
+                style="@style/MotionModeLabel"
+                android:text="@string/motion_mode_bucket" />
+        </LinearLayout>
+
+           <LinearLayout
+            android:id="@+id/motion_mode_row1"
+            style="@style/MotionModeRow">
+
+            <View
+                android:id="@+id/motion_mode_dot1"
+                style="@style/MotionModeDot" />
+
+            <TextView
+                android:id="@+id/motion_mode_label1"
+                style="@style/MotionModeLabel"
+                android:text="@string/motion_mode_chassis" />
+        </LinearLayout>
+
+
         <LinearLayout
             android:id="@+id/motion_mode_row0"
             style="@style/MotionModeRow">
@@ -28,32 +58,6 @@
                 android:text="@string/motion_mode_stop" />
         </LinearLayout>
 
-        <LinearLayout
-            android:id="@+id/motion_mode_row1"
-            style="@style/MotionModeRow">
-
-            <View
-                android:id="@+id/motion_mode_dot1"
-                style="@style/MotionModeDot" />
-
-            <TextView
-                android:id="@+id/motion_mode_label1"
-                style="@style/MotionModeLabel"
-                android:text="@string/motion_mode_chassis" />
-        </LinearLayout>
-
-        <LinearLayout
-            android:id="@+id/motion_mode_row2"
-            style="@style/MotionModeRow">
-
-            <View
-                android:id="@+id/motion_mode_dot2"
-                style="@style/MotionModeDot" />
-
-            <TextView
-                android:id="@+id/motion_mode_label2"
-                style="@style/MotionModeLabel"
-                android:text="@string/motion_mode_bucket" />
-        </LinearLayout>
+    
     </LinearLayout>
 </merge>

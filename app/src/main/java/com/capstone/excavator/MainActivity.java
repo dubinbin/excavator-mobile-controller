@@ -10,6 +10,7 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewStub;
+import android.widget.TextView;
 import android.widget.Toast;
 import android.content.Context;
 
@@ -67,9 +68,11 @@ public class MainActivity extends ScaledAppCompatActivity {
     private View rightActivityPanel;
     private View verticalActivityPanelLeft;
     private View verticalActivityPanelRight;
+    private TextView joystickRawDebugText;
     private final LevelTaskGuidanceController levelTaskGuidance = new LevelTaskGuidanceController();
     private MotionModeSegmentView motionModeSegment;
     private volatile int desiredMotionModeChannelIndex = MotionModeSegmentView.INDEX_STOP;
+    private volatile ControllerLocalSettings.Snapshot currentJoystickUiMappingSnapshot;
     private final AtomicInteger motionModeChannelApplyGeneration = new AtomicInteger();
     private EmergencyStopOverlayView emergencyStopOverlay;
     private ConfirmDialogView confirmDialog;
@@ -322,6 +325,8 @@ public class MainActivity extends ScaledAppCompatActivity {
         rightActivityPanel = findViewById(R.id.rightActivityPanel);
         verticalActivityPanelLeft = findViewById(R.id.verticalActivityPanelLeft);
         verticalActivityPanelRight = findViewById(R.id.verticalActivityPanelRight);
+        joystickRawDebugText = findViewById(R.id.joystickRawDebugText);
+        updateJoystickRawDebugText();
         levelTaskGuidance.setImuAngleConfig(imuAngleConfig);
         levelTaskGuidance.bind(this);
         motionModeSegment = findViewById(R.id.motionModeSegment);
@@ -1023,13 +1028,36 @@ public class MainActivity extends ScaledAppCompatActivity {
         @Override
         public void run() {
             if (bottomBar != null) {
-                // JoystickIndicatorView 约定：y 上为正；遥控器通道通常 y 下为正，因此统一取反
-                bottomBar.setJoystickLeft(ch4Value, ch3Value);
-                bottomBar.setJoystickRight(ch1Value, -ch2Value);
+                int leftX = ch4Value;
+                int leftY = ch3Value;
+                int rightX = ch1Value;
+                // ch2 在云卓内就是反向的，所以基础显示先取反；模式 reverse 再叠加处理。
+                int rightY = -ch2Value;
+
+                ControllerLocalSettings.Snapshot snap = currentJoystickUiMappingSnapshot;
+                if (snap != null) {
+                    if (snap.joystickLeftCdReverse) leftX = -leftX;
+                    if (snap.joystickLeftAbReverse) leftY = -leftY;
+                    if (snap.joystickRightGhReverse) rightX = -rightX;
+                    if (snap.joystickRightEfReverse) rightY = -rightY;
+                }
+
+                bottomBar.setJoystickLeft(leftX, leftY);
+                bottomBar.setJoystickRight(rightX, rightY);
             }
+            updateJoystickRawDebugText();
             updateMotionModeFromChannel(ch5Value);
         }
     };
+
+    private void updateJoystickRawDebugText() {
+        if (joystickRawDebugText == null) {
+            return;
+        }
+        joystickRawDebugText.setText(String.format(Locale.US,
+                "CH1:%5d  CH2:%5d\nCH3:%5d  CH4:%5d",
+                ch1Value, ch2Value, ch3Value, ch4Value));
+    }
 
     private final CompletionCallbackWith<int[]> joystickValueCallback = new CompletionCallbackWith<int[]>() {
         @Override
@@ -1088,11 +1116,17 @@ public class MainActivity extends ScaledAppCompatActivity {
                 return;
             }
             if (e == null) {
+                refreshJoystickUiMappingSnapshotForMode(selectedIndex);
                 Log.i("MainActivity", "运动模式通道配置已切换: " + selectedIndex);
             } else {
                 Log.e("MainActivity", "运动模式通道配置切换失败: " + e.getMessage());
             }
         });
+    }
+
+    private void refreshJoystickUiMappingSnapshotForMode(int selectedIndex) {
+        currentJoystickUiMappingSnapshot =
+                MotionModeChannelMappingManager.resolveSnapshotForMode(this, selectedIndex);
     }
     
     /**
@@ -1481,6 +1515,10 @@ public class MainActivity extends ScaledAppCompatActivity {
             applyStoredArmLengthScalesToWebView();
             // Re-load IMU config from SharedPreferences whenever settings are saved
             initImuAngleConfig();
+            if (motionModeSegment != null
+                    && motionModeSegment.getSelectedIndex() == MotionModeSegmentView.INDEX_BUCKET) {
+                refreshJoystickUiMappingSnapshotForMode(MotionModeSegmentView.INDEX_BUCKET);
+            }
         }
     }
     

@@ -62,20 +62,27 @@ public final class MotionModeChannelMappingManager {
                 return;
             }
             Context app = context.getApplicationContext();
-            ControllerLocalSettings.Snapshot snap = snapshotForMotionModeApply(app, motionModeIndex);
+            ControllerLocalSettings.Snapshot snap = resolveSnapshotForMode(app, motionModeIndex);
             String title = motionModeIndex == MotionModeSegmentView.INDEX_CHASSIS
                     ? "履带模式通道已下发"
                     : "铲斗模式通道已下发";
+            
             String msg = title + "\n" + buildAppliedDirectionSummary(snap);
             new Handler(Looper.getMainLooper()).post(() ->
                     Toast.makeText(app, msg, Toast.LENGTH_LONG).show());
         };
     }
 
-    private static ControllerLocalSettings.Snapshot snapshotForMotionModeApply(
+    public static ControllerLocalSettings.Snapshot resolveSnapshotForMode(
             Context app, int motionModeIndex) {
+        if (app == null) {
+            return null;
+        }
         if (motionModeIndex == MotionModeSegmentView.INDEX_CHASSIS) {
             return ControllerLocalSettings.createDefaultJoystickMappingSnapshot();
+        }
+        if (motionModeIndex != MotionModeSegmentView.INDEX_BUCKET) {
+            return null;
         }
         ControllerLocalSettings.Snapshot local = ControllerLocalSettings.load(app);
         if (local.joystickLeftAb.isEmpty() && local.joystickLeftCd.isEmpty()

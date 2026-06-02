@@ -60,7 +60,7 @@ public final class RcChannelSettingsHelper {
 
                 @Override
                 public void onFailure(SkyException e) {
-                    Log.e(TAG, "GET KeyChannelSettings failed: " + (e != null ? e.getMessage() : "?"));
+                    Log.e(TAG, "GET KeyChannelSettings failed in logChannelSettings: " + (e != null ? e.getMessage() : "?"));
                 }
             });
         

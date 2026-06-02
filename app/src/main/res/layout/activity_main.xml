@@ -339,6 +339,24 @@
         android:layout_marginBottom="97dp"
         android:elevation="12dp" />
 
+    <TextView
+        android:id="@+id/joystickRawDebugText"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="96dp"
+        android:background="@drawable/joystick_raw_debug_bg"
+        android:elevation="12dp"
+        android:fontFamily="monospace"
+        android:includeFontPadding="false"
+        android:paddingStart="10dp"
+        android:paddingTop="7dp"
+        android:paddingEnd="10dp"
+        android:paddingBottom="7dp"
+        android:text="CH1:    0  CH2:    0\nCH3:    0  CH4:    0"
+        android:textColor="#EFFFFFFF"
+        android:textSize="10sp" />
+
     <!-- MotionModeSegmentView mode = findViewById(R.id.motionModeSegment);
 mode.setSelectedIndex(MotionModeSegmentView.INDEX_CHASSIS);
 mode.setOnIndexChangeListener(idx -> {
