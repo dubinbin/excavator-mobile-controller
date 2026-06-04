@@ -14,8 +14,10 @@ public class ExcavatorWebAppActivity extends ScaledAppCompatActivity {
         super.onCreate(savedInstanceState);
         setFullScreenMode();
 
-        ExcavatorWebAppView webAppView =
-                new ExcavatorWebAppView(UiScaleConfig.unscaledContext(this));
+        ExcavatorWebAppView webAppView = ExcavatorWebAppPreloader.takeWarmedView(this);
+        if (webAppView == null) {
+            webAppView = new ExcavatorWebAppView(UiScaleConfig.unscaledContext(this));
+        }
         setContentView(webAppView, new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT

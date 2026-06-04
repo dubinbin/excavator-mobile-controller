@@ -2,7 +2,9 @@ package com.capstone.excavator;
 
 import android.content.Context;
 import android.util.AttributeSet;
+import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
+import android.webkit.WebView;
 
 public class ExcavatorWebAppView extends ExcavatorPostureView {
     private static final String WEB_APP_ENTRY_URL =
@@ -30,5 +32,24 @@ public class ExcavatorWebAppView extends ExcavatorPostureView {
         settings.setUseWideViewPort(true);
         settings.setLoadWithOverviewMode(true);
         settings.setTextZoom(100);
+    }
+
+    @Override
+    protected void configureWebView(WebView webView) {
+        NativeBridge bridge = new NativeBridge();
+        webView.addJavascriptInterface(bridge, "AndroidWebViewBridge");
+        webView.addJavascriptInterface(bridge, "Android");
+    }
+
+    private static final class NativeBridge {
+        @JavascriptInterface
+        public void postMessage(String message) {
+            ExcavatorWebAppBridge.dispatchMessage(message);
+        }
+
+        @JavascriptInterface
+        public void sendMessage(String message) {
+            ExcavatorWebAppBridge.dispatchMessage(message);
+        }
     }
 }

@@ -77,6 +77,7 @@ public class MainActivity extends ScaledAppCompatActivity {
     private EmergencyStopOverlayView emergencyStopOverlay;
     private ConfirmDialogView confirmDialog;
     private InlineToastView inlineToast;
+    private ExcavatorWebAppPreloader webAppPreloader;
 
     private final TaskTypeState.OnTypeChangeListener taskTypeListener =
             (newType, oldType) -> runOnUiThread(this::applyTaskOverlayVisibility);
@@ -150,6 +151,8 @@ public class MainActivity extends ScaledAppCompatActivity {
         // 设置全屏模式
         setFullScreenMode();
         setContentView(R.layout.activity_main);
+        ExcavatorWebAppBridge.setMessageListener(this::showWebAppBridgeMessage);
+        webAppPreloader = ExcavatorWebAppPreloader.preload(this);
         inflateFpvVideoLayerUnscaled();
         initViews();
         initMap();
@@ -264,6 +267,10 @@ public class MainActivity extends ScaledAppCompatActivity {
             );
         }
 
+    }
+
+    private void showWebAppBridgeMessage(String message) {
+        Toast.makeText(this, "Web消息: " + message, Toast.LENGTH_LONG).show();
     }
     
     @Override
@@ -1525,6 +1532,11 @@ public class MainActivity extends ScaledAppCompatActivity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        if (webAppPreloader != null) {
+            webAppPreloader.cleanup();
+            webAppPreloader = null;
+        }
+        ExcavatorWebAppBridge.setMessageListener(null);
         
         // 停止视频播放
         if (fpvWidget != null) {

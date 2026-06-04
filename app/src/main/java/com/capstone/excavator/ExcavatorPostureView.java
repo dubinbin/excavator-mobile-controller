@@ -43,6 +43,7 @@ public class ExcavatorPostureView extends FrameLayout {
     private float bucketAngleOffsetDeg = 0f;
     private boolean displayMode3D = true;
     private boolean pageReady = false;
+    private boolean destroyOnDetach = true;
     /**
      * 由 {@link #pause()} / {@link #resume()} 控制，用于在外部容器（如卡片切到 2D 时）暂停 3D
      * WebView 的 {@code requestAnimationFrame}+{@code evaluateJavascript}，避免后台空转抢占 FPV 的 GPU/CPU 预算。
@@ -112,6 +113,7 @@ public class ExcavatorPostureView extends FrameLayout {
         settings.setAllowContentAccess(false);
 
         applyExtraWebSettings(settings);
+        configureWebView(webView);
 
         webView.setBackgroundColor(Color.TRANSPARENT);
         webView.setOverScrollMode(OVER_SCROLL_NEVER);
@@ -143,6 +145,13 @@ public class ExcavatorPostureView extends FrameLayout {
      * 子类可覆写以调整 {@link WebSettings}（例如天地图页需允许 HTTPS 页加载 HTTP 子资源）。
      */
     protected void applyExtraWebSettings(WebSettings settings) {
+        // default: no-op
+    }
+
+    /**
+     * 子类可覆写以安装 JS bridge 等只作用于特定页面的 WebView 配置。
+     */
+    protected void configureWebView(WebView webView) {
         // default: no-op
     }
 
@@ -316,11 +325,31 @@ public class ExcavatorPostureView extends FrameLayout {
         resume();
     }
 
-    @Override
-    protected void onDetachedFromWindow() {
-        super.onDetachedFromWindow();
+    public void setDestroyOnDetach(boolean destroyOnDetach) {
+        this.destroyOnDetach = destroyOnDetach;
+    }
+
+    public void destroyWebView() {
         pageReady = false;
         webView.stopLoading();
         webView.destroy();
+    }
+
+    public void reloadWebEntryIgnoringCache() {
+        pageReady = false;
+        webView.clearCache(true);
+        webView.getSettings().setCacheMode(WebSettings.LOAD_NO_CACHE);
+        webView.loadUrl(getWebEntryUrl());
+        webView.postDelayed(() ->
+                webView.getSettings().setCacheMode(WebSettings.LOAD_DEFAULT), 1000);
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        super.onDetachedFromWindow();
+        if (!destroyOnDetach) {
+            return;
+        }
+        destroyWebView();
     }
 }
