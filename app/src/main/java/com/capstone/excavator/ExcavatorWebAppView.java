@@ -7,24 +7,74 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 
 public class ExcavatorWebAppView extends ExcavatorPostureView {
-    private static final String WEB_APP_ENTRY_URL =
-            "https://appassets.androidplatform.net/assets/web/excavator-web-app/index.html";
+    public static final String ROUTE_LEVELING_TASK_STEP1 = "#/leveling-task/step1";
+    public static final String ROUTE_DIG_TASK_STEP1 = "#/dig-task/step1";
+    public static final String ROUTE_REPAIR_SLOPE_STEP1 = "#/repair-slope/step1";
+
+    private static final String WEB_APP_BASE_URL = "http://192.168.20.146:5173/";
+    private static final String DEFAULT_ROUTE = "";
+    private static String nextInitialRoute = DEFAULT_ROUTE;
+
+    private String initialRoute = DEFAULT_ROUTE;
 
     public ExcavatorWebAppView(Context context) {
         super(context);
+        initialRoute = nextInitialRoute;
     }
 
     public ExcavatorWebAppView(Context context, AttributeSet attrs) {
         super(context, attrs);
+        initialRoute = nextInitialRoute;
     }
 
     public ExcavatorWebAppView(Context context, AttributeSet attrs, int defStyleAttr) {
         super(context, attrs, defStyleAttr);
+        initialRoute = nextInitialRoute;
     }
 
     @Override
     protected String getWebEntryUrl() {
-        return WEB_APP_ENTRY_URL;
+        String route = initialRoute == null ? nextInitialRoute : initialRoute;
+        return WEB_APP_BASE_URL + route;
+    }
+
+    @Override
+    protected boolean shouldShowWebLoadingOverlay() {
+        return true;
+    }
+
+    static void setNextInitialRoute(String route) {
+        nextInitialRoute = normalizeRoute(route);
+    }
+
+    static void clearNextInitialRoute() {
+        nextInitialRoute = DEFAULT_ROUTE;
+    }
+
+    public void loadRoute(String route) {
+        initialRoute = normalizeRoute(route);
+        loadWebEntryUrl();
+    }
+
+    private static String normalizeRoute(String route) {
+        if (route == null) {
+            return DEFAULT_ROUTE;
+        }
+
+        String normalized = route.trim();
+        if (normalized.isEmpty()) {
+            return DEFAULT_ROUTE;
+        }
+        while (normalized.startsWith("/")) {
+            normalized = normalized.substring(1);
+        }
+        if (normalized.isEmpty()) {
+            return DEFAULT_ROUTE;
+        }
+        if (normalized.startsWith("#")) {
+            return normalized;
+        }
+        return "#/" + normalized;
     }
 
     @Override

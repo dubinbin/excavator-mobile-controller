@@ -384,16 +384,16 @@ public class MainActivity extends ScaledAppCompatActivity {
         });
 
         bottomBar.setOnLevelListener(() -> {
-            startActivity(new android.content.Intent(this, LevelSettingActivity.class));
+            openWebAppRoute(ExcavatorWebAppView.ROUTE_LEVELING_TASK_STEP1);
         });
         
 
         bottomBar.setOnTrenchListener(() -> {
-            startActivity(new android.content.Intent(this, ExcavatorWebAppActivity.class));
+            openWebAppRoute(ExcavatorWebAppView.ROUTE_DIG_TASK_STEP1);
         });
 
         bottomBar.setOnSlopeListener(() -> {
-            startActivity(new android.content.Intent(this, SlopeRepairSettingActivity.class));
+            openWebAppRoute(ExcavatorWebAppView.ROUTE_REPAIR_SLOPE_STEP1);
         });
 
         // ── 通用弹窗 / Toast ─────────────────────────────────────────
@@ -432,6 +432,12 @@ public class MainActivity extends ScaledAppCompatActivity {
         setReceiverLinkConnected(false);
 
         applyTaskOverlayVisibility();
+    }
+
+    private void openWebAppRoute(String route) {
+        Intent intent = new Intent(this, ExcavatorWebAppActivity.class);
+        intent.putExtra(ExcavatorWebAppActivity.EXTRA_INITIAL_ROUTE, route);
+        startActivity(intent);
     }
 
     /**

@@ -16,6 +16,7 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
+import android.widget.ProgressBar;
 
 import androidx.core.content.ContextCompat;
 import androidx.webkit.WebViewAssetLoader;
@@ -31,6 +32,7 @@ public class ExcavatorPostureView extends FrameLayout {
 
     private final WebView webView;
     private final WebViewAssetLoader assetLoader;
+    private View loadingOverlay;
 
     private float boomAngle = 0f;
     private float stickAngle = 0f;
@@ -102,6 +104,7 @@ public class ExcavatorPostureView extends FrameLayout {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
         ));
+        addLoadingOverlayIfNeeded(context);
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -131,14 +134,29 @@ public class ExcavatorPostureView extends FrameLayout {
                 pageReady = true;
                 postCurrentPayload();
                 postDisplayMode();
+                hideWebLoadingOverlay();
             }
         });
 
-        webView.loadUrl(getWebEntryUrl());
+        loadWebEntryUrl();
     }
 
     protected String getWebEntryUrl() {
         return WEB_ENTRY_URL;
+    }
+
+    protected void loadWebEntryUrl() {
+        pageReady = false;
+        showWebLoadingOverlay();
+        webView.loadUrl(getWebEntryUrl());
+    }
+
+    protected boolean shouldShowWebLoadingOverlay() {
+        return false;
+    }
+
+    protected int getWebLoadingBackgroundColor() {
+        return Color.rgb(246, 248, 253);
     }
 
     /**
@@ -153,6 +171,51 @@ public class ExcavatorPostureView extends FrameLayout {
      */
     protected void configureWebView(WebView webView) {
         // default: no-op
+    }
+
+    private void addLoadingOverlayIfNeeded(Context context) {
+        if (!shouldShowWebLoadingOverlay()) {
+            return;
+        }
+
+        FrameLayout overlay = new FrameLayout(context);
+        overlay.setBackgroundColor(getWebLoadingBackgroundColor());
+        overlay.setClickable(true);
+
+        ProgressBar progressBar = new ProgressBar(context);
+        FrameLayout.LayoutParams progressLp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        progressLp.gravity = android.view.Gravity.CENTER;
+        overlay.addView(progressBar, progressLp);
+
+        loadingOverlay = overlay;
+        addView(loadingOverlay, new LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+        ));
+        loadingOverlay.setVisibility(pageReady ? GONE : VISIBLE);
+    }
+
+    private void showWebLoadingOverlay() {
+        if (loadingOverlay == null) {
+            return;
+        }
+        loadingOverlay.animate().cancel();
+        loadingOverlay.setAlpha(1f);
+        loadingOverlay.setVisibility(VISIBLE);
+    }
+
+    private void hideWebLoadingOverlay() {
+        if (loadingOverlay == null || loadingOverlay.getVisibility() != VISIBLE) {
+            return;
+        }
+        loadingOverlay.animate()
+                .alpha(0f)
+                .setDuration(180)
+                .withEndAction(() -> loadingOverlay.setVisibility(GONE))
+                .start();
     }
 
     /**
@@ -337,6 +400,7 @@ public class ExcavatorPostureView extends FrameLayout {
 
     public void reloadWebEntryIgnoringCache() {
         pageReady = false;
+        showWebLoadingOverlay();
         webView.clearCache(true);
         webView.getSettings().setCacheMode(WebSettings.LOAD_NO_CACHE);
         webView.loadUrl(getWebEntryUrl());
