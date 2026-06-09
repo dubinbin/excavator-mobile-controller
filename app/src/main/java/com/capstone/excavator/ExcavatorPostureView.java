@@ -16,7 +16,6 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
-import android.widget.ProgressBar;
 
 import androidx.core.content.ContextCompat;
 import androidx.webkit.WebViewAssetLoader;
@@ -156,7 +155,7 @@ public class ExcavatorPostureView extends FrameLayout {
     }
 
     protected int getWebLoadingBackgroundColor() {
-        return Color.rgb(246, 248, 253);
+        return Color.WHITE;
     }
 
     /**
@@ -181,14 +180,6 @@ public class ExcavatorPostureView extends FrameLayout {
         FrameLayout overlay = new FrameLayout(context);
         overlay.setBackgroundColor(getWebLoadingBackgroundColor());
         overlay.setClickable(true);
-
-        ProgressBar progressBar = new ProgressBar(context);
-        FrameLayout.LayoutParams progressLp = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-        );
-        progressLp.gravity = android.view.Gravity.CENTER;
-        overlay.addView(progressBar, progressLp);
 
         loadingOverlay = overlay;
         addView(loadingOverlay, new LayoutParams(

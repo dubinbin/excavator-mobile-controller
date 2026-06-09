@@ -41,7 +41,8 @@
         <activity
             android:name="com.capstone.excavator.SettingsActivity"
             android:exported="false"
-            android:screenOrientation="landscape" />
+            android:screenOrientation="landscape"
+            android:windowSoftInputMode="adjustResize" />
         <activity
             android:name="com.capstone.excavator.LevelSettingActivity"
             android:exported="false"
@@ -53,7 +54,8 @@
         <activity
             android:name="com.capstone.excavator.ExcavatorWebAppActivity"
             android:exported="false"
-            android:screenOrientation="landscape" />
+            android:screenOrientation="landscape"
+            android:windowSoftInputMode="adjustResize" />
         <activity
             android:name="com.capstone.excavator.DitchSettingPointAActivity"
             android:exported="false"

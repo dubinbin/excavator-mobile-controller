@@ -1,12 +1,18 @@
 package com.capstone.excavator;
 
+import android.content.Intent;
+import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import android.view.ViewGroup;
+import android.view.Window;
+import android.view.WindowManager;
 import android.widget.Toast;
 
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
@@ -22,7 +28,14 @@ public class SettingsActivity extends ScaledAppCompatActivity {
     private static final String WEB_EVENT_READY = "WEBVIEW_READY";
     private static final String WEB_EVENT_CLOSE_WEBVIEW = "CLOSE_WEBVIEW";
     private static final String NATIVE_EVENT_JOYSTICK_MAPPING = "JOYSTICK_MAPPING";
+    private static final String NATIVE_EVENT_SAVED_CONFIG_SIGNAL = "GET_SAVED_CONFIG_SINGAL";
+    private static final String NATIVE_EVENT_SAVED_CONFIG = "GET_SAVED_CONFIG";
+    
     private static final String WEB_EVENT_JOYSTICK_MAPPING_SAVED = "JOYSTICK_MAPPING_SAVED";
+    private static final String SAVE_CONFIG_FROM_WEBVIEW = "SAVE_CONFIG_SIGNAL";
+    private static final String MODIFY_SYSYEM_BRIGHT_EVENT = "MODIFIY_BRIGHT_IMMEDIATELY";
+    private static final String PREFS_GENERAL_UI = "general_ui_prefs";
+    private static final String KEY_BRIGHTNESS_PERCENT = "brightness_percent";
 
     public static final String EXTRA_INITIAL_PAGE = "initial_page";
     public static final int PAGE_GENERAL = 3;
@@ -34,6 +47,7 @@ public class SettingsActivity extends ScaledAppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setFullScreenMode();
+        applyStoredBrightnessPercent();
         setResult(RESULT_OK);
         mainHandler = new Handler(Looper.getMainLooper());
         ExcavatorWebAppBridge.setMessageListener(this::onWebAppMessage);
@@ -45,6 +59,22 @@ public class SettingsActivity extends ScaledAppCompatActivity {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
         ));
+        configureKeyboardInsets();
+    }
+
+    private void configureKeyboardInsets() {
+        getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+        if (settingView == null) {
+            return;
+        }
+
+        ViewCompat.setOnApplyWindowInsetsListener(settingView, (view, insets) -> {
+            Insets imeInsets = insets.getInsets(WindowInsetsCompat.Type.ime());
+            int bottomPadding = insets.isVisible(WindowInsetsCompat.Type.ime()) ? imeInsets.bottom : 0;
+            view.setPadding(0, 0, 0, bottomPadding);
+            return insets;
+        });
+        ViewCompat.requestApplyInsets(settingView);
     }
 
     @Override
@@ -78,7 +108,54 @@ public class SettingsActivity extends ScaledAppCompatActivity {
             sendJoystickMappingMessage();
         } else if (WEB_EVENT_JOYSTICK_MAPPING_SAVED.equals(type)) {
             onWebAppJoystickMappingSaved(message);
+        } else if (SAVE_CONFIG_FROM_WEBVIEW.equals(type)) {
+            onWebAppSaveConfig(message);
+        } else if (MODIFY_SYSYEM_BRIGHT_EVENT.equals(type)) {
+            onWebAppModifyBrightnessImmediately(message);
+        } else if (NATIVE_EVENT_SAVED_CONFIG_SIGNAL.equals(type)) {
+            sendSavedConfigMessage();
         }
+    }
+
+    private void onWebAppSaveConfig(String message) {
+        JSONObject payload = parsePayload(message);
+        if (payload == null) {
+            Log.w(TAG, "SAVE_CONFIG payload missing");
+            return;
+        }
+        System.out.println("onWebAppSaveConfig payload " + payload);
+        String language = payload.optString("language", "");
+        if (!language.isEmpty()) {
+            LanguageManager.setLanguage(this, normalizeLanguage(language));
+        }
+
+        if (payload.has("brightness")) {
+            int brightness = clampBrightness(Math.round((float) payload.optDouble("brightness", 50)));
+            saveBrightnessPercent(brightness);
+            applyBrightnessPercent(brightness);
+        }
+
+        String videoStreamUrl = payload.optString("videoStreamUrl", "");
+        ControllerLocalSettings.saveVideoStreamUrl(this, videoStreamUrl);
+
+        Intent resultIntent = new Intent();
+        if (!videoStreamUrl.trim().isEmpty()) {
+            resultIntent.putExtra("video_url", videoStreamUrl.trim());
+        }
+        setResult(RESULT_OK, resultIntent);
+        Toast.makeText(this, "设置已保存", Toast.LENGTH_SHORT).show();
+    }
+
+    private void onWebAppModifyBrightnessImmediately(String message) {
+        JSONObject payload = parsePayload(message);
+        if (payload == null || !payload.has("brightness")) {
+            Log.w(TAG, "MODIFIY_BRIGHT_IMMEDIATELY brightness missing");
+            return;
+        }
+
+        int brightness = clampBrightness(Math.round((float) payload.optDouble("brightness", 50)));
+        saveBrightnessPercent(brightness);
+        applyBrightnessPercent(brightness);
     }
 
     private void onWebAppJoystickMappingSaved(String message) {
@@ -129,6 +206,74 @@ public class SettingsActivity extends ScaledAppCompatActivity {
         }
     }
 
+    private static JSONObject parsePayload(String message) {
+        if (message == null) {
+            return null;
+        }
+        try {
+            JSONObject json = new JSONObject(message.trim());
+            JSONObject payload = json.optJSONObject("payload");
+            return payload != null ? payload : json;
+        } catch (JSONException e) {
+            return null;
+        }
+    }
+
+    private static String normalizeLanguage(String language) {
+        if (language == null) {
+            return LanguageManager.DEFAULT_LANGUAGE;
+        }
+        String normalized = language.trim();
+        switch (normalized) {
+            case LanguageManager.LANG_ZH_HANS:
+            case "zh_CN":
+            case "zh-CN":
+            case "zh":
+            case "zhHans":
+            case "zh_hans":
+                return LanguageManager.LANG_ZH_HANS;
+            case LanguageManager.LANG_ZH_HANT:
+            case "zh_TW":
+            case "zh-TW":
+            case "zh_HK":
+            case "zh-HK":
+            case "zhHant":
+            case "zh_hant":
+                return LanguageManager.LANG_ZH_HANT;
+            case LanguageManager.LANG_EN:
+            case "en_US":
+            case "en-US":
+                return LanguageManager.LANG_EN;
+            default:
+                return LanguageManager.DEFAULT_LANGUAGE;
+        }
+    }
+
+    private static int clampBrightness(int percent) {
+        return Math.max(0, Math.min(100, percent));
+    }
+
+    private void saveBrightnessPercent(int percent) {
+        SharedPreferences sp = getSharedPreferences(PREFS_GENERAL_UI, MODE_PRIVATE);
+        sp.edit().putInt(KEY_BRIGHTNESS_PERCENT, clampBrightness(percent)).apply();
+    }
+
+    private void applyStoredBrightnessPercent() {
+        SharedPreferences sp = getSharedPreferences(PREFS_GENERAL_UI, MODE_PRIVATE);
+        applyBrightnessPercent(sp.getInt(KEY_BRIGHTNESS_PERCENT, 50));
+    }
+
+    private void applyBrightnessPercent(int percent) {
+        Window window = getWindow();
+        if (window == null) {
+            return;
+        }
+        WindowManager.LayoutParams lp = window.getAttributes();
+        float brightness = Math.max(0.05f, Math.min(1f, clampBrightness(percent) / 100f));
+        lp.screenBrightness = brightness;
+        window.setAttributes(lp);
+    }
+
     private void sendJoystickMappingMessage() {
         if (settingView == null) {
             return;
@@ -141,6 +286,29 @@ public class SettingsActivity extends ScaledAppCompatActivity {
         } catch (JSONException e) {
             Log.w(TAG, "build joystick mapping message failed", e);
         }
+    }
+
+    private void sendSavedConfigMessage() {
+        if (settingView == null) {
+            return;
+        }
+        try {
+            JSONObject message = new JSONObject();
+            message.put("type", NATIVE_EVENT_SAVED_CONFIG);
+            message.put("payload", buildSavedConfigPayload());
+            settingView.sendMessageToWeb(message.toString());
+        } catch (JSONException e) {
+            Log.w(TAG, "build saved config message failed", e);
+        }
+    }
+
+    private JSONObject buildSavedConfigPayload() throws JSONException {
+        SharedPreferences sp = getSharedPreferences(PREFS_GENERAL_UI, MODE_PRIVATE);
+        ControllerLocalSettings.Snapshot local = ControllerLocalSettings.load(this);
+        return new JSONObject()
+                .put("language", LanguageManager.getLanguage(this))
+                .put("brightness", clampBrightness(sp.getInt(KEY_BRIGHTNESS_PERCENT, 50)))
+                .put("videoStreamUrl", local.videoStreamUrl != null ? local.videoStreamUrl : "");
     }
 
     private JSONObject buildJoystickMappingPayload() throws JSONException {

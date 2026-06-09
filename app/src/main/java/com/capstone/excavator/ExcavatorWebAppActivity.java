@@ -2,7 +2,10 @@ package com.capstone.excavator;
 
 import android.os.Bundle;
 import android.view.ViewGroup;
+import android.view.WindowManager;
 
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
@@ -33,6 +36,22 @@ public class ExcavatorWebAppActivity extends ScaledAppCompatActivity {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
         ));
+        configureKeyboardInsets(webAppView);
+    }
+
+    private void configureKeyboardInsets(ExcavatorWebAppView webAppView) {
+        getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+        if (webAppView == null) {
+            return;
+        }
+
+        ViewCompat.setOnApplyWindowInsetsListener(webAppView, (view, insets) -> {
+            Insets imeInsets = insets.getInsets(WindowInsetsCompat.Type.ime());
+            int bottomPadding = insets.isVisible(WindowInsetsCompat.Type.ime()) ? imeInsets.bottom : 0;
+            view.setPadding(0, 0, 0, bottomPadding);
+            return insets;
+        });
+        ViewCompat.requestApplyInsets(webAppView);
     }
 
     @Override
