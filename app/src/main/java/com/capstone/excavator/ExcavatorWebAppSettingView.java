@@ -11,7 +11,7 @@ import android.webkit.WebView;
 import org.json.JSONObject;
 
 public class ExcavatorWebAppSettingView extends ExcavatorPostureView {
-    private static final String WEB_APP_BASE_URL = "http://192.168.20.146:5173/";
+    private static final String WEB_APP_BASE_URL = "https://appassets.androidplatform.net/assets/web/excavator-web-app/index.html";
     private static final String[] SETTINGS_ROUTES = {
             "#/settings/imu_setting",
             "#/settings/size_setting",

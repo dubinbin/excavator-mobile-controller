@@ -11,7 +11,8 @@ public class ExcavatorWebAppView extends ExcavatorPostureView {
     public static final String ROUTE_DIG_TASK_STEP1 = "#/dig-task/step1";
     public static final String ROUTE_REPAIR_SLOPE_STEP1 = "#/repair-slope/step1";
 
-    private static final String WEB_APP_BASE_URL = "http://192.168.20.146:5173/";
+   // private static final String WEB_APP_BASE_URL = "http://192.168.20.145:5173/";
+    private static final String WEB_APP_BASE_URL = "https://appassets.androidplatform.net/assets/web/excavator-web-app/index.html";
     private static final String DEFAULT_ROUTE = "";
     private static String nextInitialRoute = DEFAULT_ROUTE;
 
