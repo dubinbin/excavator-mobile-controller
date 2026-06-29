@@ -56,7 +56,7 @@ public class SettingsActivity extends ScaledAppCompatActivity {
         ExcavatorWebAppBridge.setMessageListener(this::onWebAppMessage);
 
         int initialPage = getIntent().getIntExtra(EXTRA_INITIAL_PAGE, 0);
-        String initialRoute = ExcavatorWebAppSettingView.getRouteForPage(initialPage);
+        String initialRoute = ExcavatorWebAppView.getSettingsRoute(initialPage);
         ExcavatorWebAppView.setNextInitialRoute(initialRoute);
         settingView = ExcavatorWebAppPreloader.takeWarmedSettingsView(this);
         boolean reusedWarmedView = settingView != null;

@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- 尺寸页「选择机型」网格列数，与 RecyclerView GridLayoutManager 一致 -->
-    <integer name="dim_model_grid_span_count">3</integer>
-</resources>

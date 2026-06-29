@@ -15,6 +15,12 @@ public class ExcavatorWebAppView extends ExcavatorPostureView {
     public static final String ROUTE_LEVELING_TASK_STEP1 = "#/leveling-task/step1";
     public static final String ROUTE_DIG_TASK_STEP1 = "#/dig-task/step1";
     public static final String ROUTE_REPAIR_SLOPE_STEP1 = "#/repair-slope/step1";
+    private static final String[] SETTINGS_ROUTES = {
+            "#/settings/imu_setting",
+            "#/settings/size_setting",
+            "#/settings/joystick_setting",
+            "#/settings/common_setting"
+    };
 
    // private static final String WEB_APP_BASE_URL = "http://192.168.20.145:5173/";
     private static final String WEB_APP_BASE_URL = "https://appassets.androidplatform.net/assets/web/excavator-web-app/index.html";
@@ -68,6 +74,11 @@ public class ExcavatorWebAppView extends ExcavatorPostureView {
 
     static void clearNextInitialRoute() {
         nextInitialRoute = DEFAULT_ROUTE;
+    }
+
+    static String getSettingsRoute(int page) {
+        int normalizedPage = page < 0 || page >= SETTINGS_ROUTES.length ? 0 : page;
+        return SETTINGS_ROUTES[normalizedPage];
     }
 
     public void loadRoute(String route) {

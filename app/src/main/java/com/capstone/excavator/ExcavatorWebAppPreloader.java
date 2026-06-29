@@ -37,10 +37,10 @@ final class ExcavatorWebAppPreloader {
             ExcavatorWebAppView.ROUTE_REPAIR_SLOPE_STEP1
     };
     private static final String[] SETTINGS_ROUTES = {
-            ExcavatorWebAppSettingView.getRouteForPage(3),
-            ExcavatorWebAppSettingView.getRouteForPage(0),
-            ExcavatorWebAppSettingView.getRouteForPage(1),
-            ExcavatorWebAppSettingView.getRouteForPage(2)
+            ExcavatorWebAppView.getSettingsRoute(3),
+            ExcavatorWebAppView.getSettingsRoute(0),
+            ExcavatorWebAppView.getSettingsRoute(1),
+            ExcavatorWebAppView.getSettingsRoute(2)
     };
 
     @Nullable

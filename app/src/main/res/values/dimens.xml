@@ -8,6 +8,4 @@
     <!-- 有 footer 时，为「低」与 footer 之间预留的额外高度（原 2.5dp） -->
     <dimen name="gauge_low_to_footer_spacing">5dp</dimen>
     <dimen name="inline_toast_download_min_width">280dp</dimen>
-    <!-- 机型卡片网格：项与项之间的间距（RecyclerView ItemDecoration） -->
-    <dimen name="dim_model_grid_gap">18dp</dimen>
 </resources>

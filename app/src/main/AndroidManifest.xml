@@ -44,58 +44,10 @@
             android:screenOrientation="landscape"
             android:windowSoftInputMode="adjustResize" />
         <activity
-            android:name="com.capstone.excavator.LevelSettingActivity"
-            android:exported="false"
-            android:screenOrientation="landscape" />
-        <activity
-            android:name="com.capstone.excavator.DitchSettingActivity"
-            android:exported="false"
-            android:screenOrientation="landscape" />
-        <activity
             android:name="com.capstone.excavator.ExcavatorWebAppActivity"
             android:exported="false"
             android:screenOrientation="landscape"
             android:windowSoftInputMode="adjustResize" />
-        <activity
-            android:name="com.capstone.excavator.DitchSettingPointAActivity"
-            android:exported="false"
-            android:screenOrientation="landscape" />
-        <activity
-            android:name="com.capstone.excavator.DitchSettingPointBActivity"
-            android:exported="false"
-            android:screenOrientation="landscape" />
-        <activity
-            android:name="com.capstone.excavator.LevelPrecheckActivity"
-            android:exported="false"
-            android:screenOrientation="landscape" />
-        <activity
-            android:name="com.capstone.excavator.DitchSideWorkSettingActivity"
-            android:exported="false"
-            android:screenOrientation="landscape" />
-        <activity
-            android:name="com.capstone.excavator.DitchPrecheckActivity"
-            android:exported="false"
-            android:screenOrientation="landscape" />
-        <activity
-            android:name="com.capstone.excavator.SlopeRepairSettingActivity"
-            android:exported="false"
-            android:screenOrientation="landscape" />
-        <activity
-            android:name="com.capstone.excavator.SlopeRepairSecondSettingActivity"
-            android:exported="false"
-            android:screenOrientation="landscape" />
-        <activity
-            android:name="com.capstone.excavator.SlopeRepairSecondSettingActivityPointB"
-            android:exported="false"
-            android:screenOrientation="landscape" />
-        <activity
-            android:name="com.capstone.excavator.SlopeRepairThirdSettingActivity"
-            android:exported="false"
-            android:screenOrientation="landscape" />
-        <activity
-            android:name="com.capstone.excavator.SlopeRepairPrecheckActivity"
-            android:exported="false"
-            android:screenOrientation="landscape" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

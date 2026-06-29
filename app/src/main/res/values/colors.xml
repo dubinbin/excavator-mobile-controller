@@ -17,9 +17,8 @@
     <color name="excavator_gray">#FF888888</color>
     <color name="excavator_orange">#FFFFA500</color>
 
-    <!-- 找平设置页 -->
+    <!-- 通用主色 -->
     <color name="level_selected">#FF2563EB</color>
-    <color name="level_unselected">#FF9CA3AF</color>
 
     <!-- 运动模式三档（MotionModeSegmentView） -->
     <color name="motion_mode_stop">#FFE53935</color>

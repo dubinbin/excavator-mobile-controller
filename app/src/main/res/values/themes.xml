@@ -16,31 +16,4 @@
 
     <style name="Theme.MyApplication" parent="Base.Theme.MyApplication" />
 
-    <!-- 数字键盘圆形按键 -->
-    <style name="NumpadKey">
-        <item name="android:layout_width">60dp</item>
-        <item name="android:layout_height">60dp</item>
-        <item name="android:layout_marginStart">4dp</item>
-        <item name="android:layout_marginEnd">4dp</item>
-        <item name="android:background">@drawable/numpad_key_bg</item>
-        <item name="android:gravity">center</item>
-        <item name="android:includeFontPadding">false</item>
-        <item name="android:textColor">#FF374151</item>
-        <item name="android:textSize">22sp</item>
-        <item name="android:fontFamily">sans-serif-light</item>
-        <item name="android:clickable">true</item>
-        <item name="android:focusable">true</item>
-    </style>
-
-    <style name="ImuSectionHeader">
-        <item name="android:layout_width">match_parent</item>
-        <item name="android:layout_height">26dp</item>
-        <item name="android:gravity">center_vertical</item>
-        <item name="android:paddingStart">8dp</item>
-        <item name="android:background">#FF2A2A2A</item>
-        <item name="android:textColor">#FFD700</item>
-        <item name="android:textSize">12sp</item>
-        <item name="android:textStyle">bold</item>
-        <item name="android:layout_marginBottom">4dp</item>
-    </style>
 </resources>
