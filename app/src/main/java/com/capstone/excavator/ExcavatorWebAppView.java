@@ -6,6 +6,11 @@ import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.util.Arrays;
+
 public class ExcavatorWebAppView extends ExcavatorPostureView {
     public static final String ROUTE_LEVELING_TASK_STEP1 = "#/leveling-task/step1";
     public static final String ROUTE_DIG_TASK_STEP1 = "#/dig-task/step1";
@@ -17,9 +22,20 @@ public class ExcavatorWebAppView extends ExcavatorPostureView {
     private static String nextInitialRoute = DEFAULT_ROUTE;
 
     private String initialRoute = DEFAULT_ROUTE;
+    private String pendingRoute;
+    private boolean routeWarmupRequested;
+    private boolean routeWarmupStarted;
+    private boolean routeWarmupComplete;
+    private Runnable routeWarmupCompleteListener;
+    private String warmupRoutesJson = "[]";
 
     public ExcavatorWebAppView(Context context) {
         super(context);
+        initialRoute = nextInitialRoute;
+    }
+
+    ExcavatorWebAppView(Context context, boolean bypassInitialCache) {
+        super(context, null, 0, bypassInitialCache);
         initialRoute = nextInitialRoute;
     }
 
@@ -41,7 +57,9 @@ public class ExcavatorWebAppView extends ExcavatorPostureView {
 
     @Override
     protected boolean shouldShowWebLoadingOverlay() {
-        return true;
+        // index.html 自带与页面同色的 Loading 动画。原生白色 overlay 会把它完全遮住，
+        // 在极早点击、预热尚未完成时表现成数秒纯白屏。
+        return false;
     }
 
     static void setNextInitialRoute(String route) {
@@ -54,7 +72,115 @@ public class ExcavatorWebAppView extends ExcavatorPostureView {
 
     public void loadRoute(String route) {
         initialRoute = normalizeRoute(route);
-        loadWebEntryUrl();
+        routeWarmupRequested = false;
+        cancelRouteWarmup();
+        if (!isWebPageReady()) {
+            pendingRoute = initialRoute;
+            return;
+        }
+        navigateRouteWithoutReload(initialRoute);
+    }
+
+    void prewarmRoutes(String[] routes, Runnable onComplete) {
+        routeWarmupRequested = true;
+        routeWarmupCompleteListener = onComplete;
+        warmupRoutesJson = new JSONArray(Arrays.asList(routes)).toString();
+        if (isWebPageReady()) {
+            startRouteWarmup();
+        }
+    }
+
+    boolean isRouteWarmupComplete() {
+        return routeWarmupComplete;
+    }
+
+    void cancelRouteWarmup() {
+        if (routeWarmupStarted && !routeWarmupComplete) {
+            evaluateWebJavascript("window.__excavatorWarmupCancelled = true;");
+        }
+    }
+
+    @Override
+    protected void onWebPageFinished(WebView webView, String url) {
+        if (pendingRoute != null) {
+            String route = pendingRoute;
+            pendingRoute = null;
+            navigateRouteWithoutReload(route);
+        } else if (routeWarmupRequested) {
+            startRouteWarmup();
+        }
+    }
+
+    private void navigateRouteWithoutReload(String route) {
+        String quotedRoute = JSONObject.quote(normalizeRoute(route));
+        evaluateWebJavascript(
+                "window.__excavatorWarmupCancelled = true;"
+                        + "if (window.location.hash === " + quotedRoute + ") {"
+                        + "window.location.hash = '#/';"
+                        + "requestAnimationFrame(() => requestAnimationFrame(() => {"
+                        + "window.location.hash = " + quotedRoute + ";"
+                        + "}));"
+                        + "} else {"
+                        + "window.location.hash = " + quotedRoute + ";"
+                        + "}"
+        );
+    }
+
+    private void startRouteWarmup() {
+        if (routeWarmupStarted || !routeWarmupRequested || !isWebPageReady()) {
+            return;
+        }
+        routeWarmupStarted = true;
+        evaluateWebJavascript(
+                "(() => {"
+                        + "window.__excavatorWarmupCancelled = false;"
+                        + "const routes = " + warmupRoutesJson + ";"
+                        + "const frames = () => new Promise(resolve => "
+                        + "requestAnimationFrame(() => requestAnimationFrame(resolve)));"
+                        + "const settle = async () => {"
+                        + "await new Promise(resolve => setTimeout(resolve, 80));"
+                        + "await frames();"
+                        + "const images = Array.from(document.images);"
+                        + "const decoded = Promise.all(images.map(image => {"
+                        + "if (image.decode) return image.decode().catch(() => {});"
+                        + "if (image.complete) return Promise.resolve();"
+                        + "return new Promise(resolve => {"
+                        + "image.addEventListener('load', resolve, {once:true});"
+                        + "image.addEventListener('error', resolve, {once:true});"
+                        + "});"
+                        + "}));"
+                        + "await Promise.race([decoded, "
+                        + "new Promise(resolve => setTimeout(resolve, 1200))]);"
+                        + "await frames();"
+                        + "};"
+                        + "(async () => {"
+                        + "for (const route of routes) {"
+                        + "if (window.__excavatorWarmupCancelled) return;"
+                        + "window.location.hash = route;"
+                        + "await settle();"
+                        + "}"
+                        + "if (window.__excavatorWarmupCancelled) return;"
+                        + "window.location.hash = '#/';"
+                        + "await frames();"
+                        + "if (!window.__excavatorWarmupCancelled) {"
+                        + "AndroidWebViewBridge.onPreloadReady();"
+                        + "}"
+                        + "})().catch(() => AndroidWebViewBridge.onPreloadReady());"
+                        + "})();"
+        );
+    }
+
+    public void sendMessageToWeb(String messageJson) {
+        String quoted = JSONObject.quote(messageJson);
+        String js = "(function(){"
+                + "var raw=" + quoted + ";"
+                + "var msg;try{msg=JSON.parse(raw);}catch(e){msg=raw;}"
+                + "if(window.receiveMessage){window.receiveMessage(msg);}"
+                + "if(window.onNativeMessage){window.onNativeMessage(msg);}"
+                + "window.dispatchEvent(new MessageEvent('message',{data:msg}));"
+                + "window.dispatchEvent(new CustomEvent('nativeMessage',{detail:msg}));"
+                + "})();";
+        postJavascriptToWebView(js);
     }
 
     private static String normalizeRoute(String route) {
@@ -92,15 +218,34 @@ public class ExcavatorWebAppView extends ExcavatorPostureView {
         webView.addJavascriptInterface(bridge, "Android");
     }
 
-    private static final class NativeBridge {
+    private final class NativeBridge {
         @JavascriptInterface
         public void postMessage(String message) {
-            ExcavatorWebAppBridge.dispatchMessage(message);
+            if (!routeWarmupRequested) {
+                ExcavatorWebAppBridge.dispatchMessage(message);
+            }
         }
 
         @JavascriptInterface
         public void sendMessage(String message) {
-            ExcavatorWebAppBridge.dispatchMessage(message);
+            if (!routeWarmupRequested) {
+                ExcavatorWebAppBridge.dispatchMessage(message);
+            }
+        }
+
+        @JavascriptInterface
+        public void onPreloadReady() {
+            post(() -> {
+                if (!routeWarmupRequested || routeWarmupComplete) {
+                    return;
+                }
+                routeWarmupComplete = true;
+                Runnable listener = routeWarmupCompleteListener;
+                routeWarmupCompleteListener = null;
+                if (listener != null) {
+                    listener.run();
+                }
+            });
         }
     }
 }

@@ -66,6 +66,15 @@ public class ExcavatorPostureView extends FrameLayout {
     }
 
     public ExcavatorPostureView(Context context, AttributeSet attrs, int defStyleAttr) {
+        this(context, attrs, defStyleAttr, false);
+    }
+
+    protected ExcavatorPostureView(
+            Context context,
+            AttributeSet attrs,
+            int defStyleAttr,
+            boolean bypassInitialCache
+    ) {
         super(context, attrs, defStyleAttr);
 
         float cornerRadiusPx = TypedValue.applyDimension(
@@ -98,7 +107,7 @@ public class ExcavatorPostureView extends FrameLayout {
                 .build();
 
         webView = new WebView(context);
-        initWebView();
+        initWebView(bypassInitialCache);
         addView(webView, new LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
@@ -107,12 +116,15 @@ public class ExcavatorPostureView extends FrameLayout {
     }
 
     @SuppressLint("SetJavaScriptEnabled")
-    private void initWebView() {
+    private void initWebView(boolean bypassInitialCache) {
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
         settings.setAllowFileAccess(false);
         settings.setAllowContentAccess(false);
+        if (bypassInitialCache) {
+            settings.setCacheMode(WebSettings.LOAD_NO_CACHE);
+        }
 
         applyExtraWebSettings(settings);
         configureWebView(webView);
@@ -134,10 +146,17 @@ public class ExcavatorPostureView extends FrameLayout {
                 postCurrentPayload();
                 postDisplayMode();
                 hideWebLoadingOverlay();
+                onWebPageFinished(view, url);
             }
         });
 
         loadWebEntryUrl();
+        if (bypassInitialCache) {
+            webView.postDelayed(
+                    () -> settings.setCacheMode(WebSettings.LOAD_DEFAULT),
+                    1000
+            );
+        }
     }
 
     protected String getWebEntryUrl() {
@@ -170,6 +189,19 @@ public class ExcavatorPostureView extends FrameLayout {
      */
     protected void configureWebView(WebView webView) {
         // default: no-op
+    }
+
+    /** 页面完成后的子类扩展点。 */
+    protected void onWebPageFinished(WebView webView, String url) {
+        // default: no-op
+    }
+
+    protected final boolean isWebPageReady() {
+        return pageReady;
+    }
+
+    protected final void evaluateWebJavascript(String script) {
+        webView.post(() -> webView.evaluateJavascript(script, null));
     }
 
     private void addLoadingOverlayIfNeeded(Context context) {

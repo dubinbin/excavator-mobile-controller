@@ -5,6 +5,7 @@ import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.util.Log;
 import android.view.ViewGroup;
 import android.view.Window;
@@ -40,11 +41,13 @@ public class SettingsActivity extends ScaledAppCompatActivity {
     public static final String EXTRA_INITIAL_PAGE = "initial_page";
     public static final int PAGE_GENERAL = 3;
 
-    private ExcavatorWebAppSettingView settingView;
+    private ExcavatorWebAppView settingView;
     private Handler mainHandler;
+    private long createStartedAtMs;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        createStartedAtMs = SystemClock.elapsedRealtime();
         super.onCreate(savedInstanceState);
         setFullScreenMode();
         applyStoredBrightnessPercent();
@@ -53,12 +56,21 @@ public class SettingsActivity extends ScaledAppCompatActivity {
         ExcavatorWebAppBridge.setMessageListener(this::onWebAppMessage);
 
         int initialPage = getIntent().getIntExtra(EXTRA_INITIAL_PAGE, 0);
-        ExcavatorWebAppSettingView.setNextInitialPage(initialPage);
-        settingView = new ExcavatorWebAppSettingView(UiScaleConfig.unscaledContext(this));
+        String initialRoute = ExcavatorWebAppSettingView.getRouteForPage(initialPage);
+        ExcavatorWebAppView.setNextInitialRoute(initialRoute);
+        settingView = ExcavatorWebAppPreloader.takeWarmedSettingsView(this);
+        boolean reusedWarmedView = settingView != null;
+        if (settingView == null) {
+            settingView = new ExcavatorWebAppView(UiScaleConfig.unscaledContext(this));
+        }
+        ExcavatorWebAppView.clearNextInitialRoute();
         setContentView(settingView, new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
         ));
+        if (reusedWarmedView) {
+            settingView.loadRoute(initialRoute);
+        }
         configureKeyboardInsets();
     }
 
@@ -105,6 +117,8 @@ public class SettingsActivity extends ScaledAppCompatActivity {
         if (WEB_EVENT_CLOSE_WEBVIEW.equals(type)) {
             runOnUiThread(this::finish);
         } else if (WEB_EVENT_READY.equals(type)) {
+            Log.i(TAG, "web settings ready after "
+                    + (SystemClock.elapsedRealtime() - createStartedAtMs) + " ms");
             sendJoystickMappingMessage();
         } else if (WEB_EVENT_JOYSTICK_MAPPING_SAVED.equals(type)) {
             onWebAppJoystickMappingSaved(message);

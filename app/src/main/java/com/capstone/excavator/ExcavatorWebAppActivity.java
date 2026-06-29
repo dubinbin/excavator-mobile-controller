@@ -25,17 +25,20 @@ public class ExcavatorWebAppActivity extends ScaledAppCompatActivity {
 
         String initialRoute = getIntent().getStringExtra(EXTRA_INITIAL_ROUTE);
         ExcavatorWebAppView.setNextInitialRoute(initialRoute);
-        ExcavatorWebAppView webAppView = ExcavatorWebAppPreloader.takeWarmedView(this);
+        ExcavatorWebAppView webAppView = ExcavatorWebAppPreloader.takeWarmedTaskView(this);
+        boolean reusedWarmedView = webAppView != null;
         if (webAppView == null) {
             webAppView = new ExcavatorWebAppView(UiScaleConfig.unscaledContext(this));
-        } else {
-            webAppView.loadRoute(initialRoute);
         }
         ExcavatorWebAppView.clearNextInitialRoute();
         setContentView(webAppView, new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
         ));
+        if (reusedWarmedView) {
+            // 只切换 SPA hash，保留已解析的 JS、React runtime 和图片解码结果。
+            webAppView.loadRoute(initialRoute);
+        }
         configureKeyboardInsets(webAppView);
     }
 

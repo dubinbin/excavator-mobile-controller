@@ -91,6 +91,7 @@ public class MainActivity extends ScaledAppCompatActivity {
     // 摇杆值更新Handler（独立更新）
     private Handler joystickHandler;
     private Runnable joystickUpdateRunnable;
+    private volatile boolean remoteControllerConnected;
     private final ImuAngleConverter.Config imuAngleConfig = ImuAngleConverter.createDefaultConfig();
     
     // UDP相关
@@ -188,6 +189,9 @@ public class MainActivity extends ScaledAppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (!ExcavatorWebAppPreloader.hasAllWarmedViews()) {
+            webAppPreloader = ExcavatorWebAppPreloader.preload(this);
+        }
         if (mapView != null) mapView.resume();
         if (postureCardView != null) postureCardView.onActivityResume();
         if (!fpvFirstResumeSkipped) {
@@ -1096,6 +1100,9 @@ public class MainActivity extends ScaledAppCompatActivity {
      * 更新摇杆值
      */
     private void updateJoystickValues() {
+        if (!remoteControllerConnected) {
+            return;
+        }
         KeyManager.INSTANCE.get(RemoteControllerKey.INSTANCE.getKeyChannels(),
                 joystickValueCallback);
     }
@@ -1152,6 +1159,7 @@ public class MainActivity extends ScaledAppCompatActivity {
         RCSDKManager.INSTANCE.initSDK(this, new SDKManagerCallBack() {
             @Override
             public void onRcConnected() {
+                remoteControllerConnected = true;
                 Log.d("MainActivity", "遥控器连接成功");
                 runOnUiThread(() -> {
                     Toast.makeText(MainActivity.this, "遥控器连接成功", Toast.LENGTH_SHORT).show();
@@ -1169,6 +1177,7 @@ public class MainActivity extends ScaledAppCompatActivity {
             
             @Override
             public void onRcConnectFail(SkyException e) {
+                remoteControllerConnected = false;
                 Log.e("MainActivity", "遥控器连接失败: " + (e != null ? e.getMessage() : "未知错误"));
                 runOnUiThread(() -> {
                     setReceiverLinkConnected(false);
@@ -1178,6 +1187,7 @@ public class MainActivity extends ScaledAppCompatActivity {
             
             @Override
             public void onRcDisconnect() {
+                remoteControllerConnected = false;
                 Log.e("MainActivity", "遥控器断开连接");
                 runOnUiThread(() -> {
                     setReceiverLinkConnected(false);

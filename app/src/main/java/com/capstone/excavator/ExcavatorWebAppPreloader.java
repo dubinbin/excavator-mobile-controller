@@ -31,9 +31,22 @@ final class ExcavatorWebAppPreloader {
             "<meta\\s+[^>]*name=[\"']version[\"'][^>]*content=[\"']([^\"']+)[\"'][^>]*>",
             Pattern.CASE_INSENSITIVE
     );
+    private static final String[] TASK_ROUTES = {
+            ExcavatorWebAppView.ROUTE_LEVELING_TASK_STEP1,
+            ExcavatorWebAppView.ROUTE_DIG_TASK_STEP1,
+            ExcavatorWebAppView.ROUTE_REPAIR_SLOPE_STEP1
+    };
+    private static final String[] SETTINGS_ROUTES = {
+            ExcavatorWebAppSettingView.getRouteForPage(3),
+            ExcavatorWebAppSettingView.getRouteForPage(0),
+            ExcavatorWebAppSettingView.getRouteForPage(1),
+            ExcavatorWebAppSettingView.getRouteForPage(2)
+    };
 
     @Nullable
-    private static ExcavatorWebAppView warmedView;
+    private static ExcavatorWebAppView warmedTaskView;
+    @Nullable
+    private static ExcavatorWebAppView warmedSettingsView;
     @Nullable
     private static String warmedVersion;
 
@@ -55,13 +68,28 @@ final class ExcavatorWebAppPreloader {
     }
 
     @Nullable
-    static ExcavatorWebAppView takeWarmedView(Activity activity) {
-        ExcavatorWebAppView view = warmedView;
+    static ExcavatorWebAppView takeWarmedTaskView(Activity activity) {
+        ExcavatorWebAppView view = warmedTaskView;
+        warmedTaskView = null;
+        return prepareTakenView(activity, view, "task");
+    }
+
+    @Nullable
+    static ExcavatorWebAppView takeWarmedSettingsView(Activity activity) {
+        ExcavatorWebAppView view = warmedSettingsView;
+        warmedSettingsView = null;
+        return prepareTakenView(activity, view, "settings");
+    }
+
+    @Nullable
+    private static ExcavatorWebAppView prepareTakenView(
+            Activity activity,
+            @Nullable ExcavatorWebAppView view,
+            String kind
+    ) {
         if (view == null) {
             return null;
         }
-        warmedView = null;
-        warmedVersion = null;
 
         ViewGroup parent = (ViewGroup) view.getParent();
         if (parent != null) {
@@ -75,8 +103,14 @@ final class ExcavatorWebAppPreloader {
         view.setFocusable(true);
         view.setDestroyOnDetach(true);
         view.resume();
-        Log.i(TAG, "reuse warmed web app view in " + activity.getClass().getSimpleName());
+        Log.i(TAG, "reuse warmed " + kind + " web app view in "
+                + activity.getClass().getSimpleName()
+                + ", routesReady=" + view.isRouteWarmupComplete());
         return view;
+    }
+
+    static boolean hasAllWarmedViews() {
+        return warmedTaskView != null && warmedSettingsView != null;
     }
 
     private ExcavatorWebAppPreloader(Activity activity, String assetVersion) {
@@ -91,13 +125,34 @@ final class ExcavatorWebAppPreloader {
 
         if (versionChanged) {
             Log.i(TAG, "web app version changed: " + cachedVersion + " -> " + assetVersion);
-            destroyWarmedView();
-        } else if (warmedView != null && assetVersion.equals(warmedVersion)) {
-            attachHiddenViewIfNeeded(warmedView);
-            return;
+            destroyWarmedViews();
+        } else if (warmedVersion != null && !assetVersion.equals(warmedVersion)) {
+            destroyWarmedViews();
         }
 
-        ExcavatorWebAppView view = new ExcavatorWebAppView(UiScaleConfig.unscaledContext(activity));
+        if (warmedTaskView == null) {
+            warmedTaskView = createHiddenView(versionChanged, TASK_ROUTES, "task");
+        } else {
+            attachHiddenViewIfNeeded(warmedTaskView);
+        }
+        if (warmedSettingsView == null) {
+            warmedSettingsView = createHiddenView(versionChanged, SETTINGS_ROUTES, "settings");
+        } else {
+            attachHiddenViewIfNeeded(warmedSettingsView);
+        }
+        warmedVersion = assetVersion;
+        prefs.edit().putString(KEY_VERSION, assetVersion).apply();
+    }
+
+    private ExcavatorWebAppView createHiddenView(
+            boolean bypassInitialCache,
+            String[] routes,
+            String kind
+    ) {
+        ExcavatorWebAppView view = new ExcavatorWebAppView(
+                UiScaleConfig.unscaledContext(activity),
+                bypassInitialCache
+        );
         view.setDestroyOnDetach(false);
         view.setAlpha(0f);
         view.setVisibility(View.VISIBLE);
@@ -105,13 +160,10 @@ final class ExcavatorWebAppPreloader {
         view.setClickable(false);
         view.setFocusable(false);
         view.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
-        if (versionChanged) {
-            view.reloadWebEntryIgnoringCache();
-        }
-        warmedView = view;
-        warmedVersion = assetVersion;
         attachHiddenViewIfNeeded(view);
-        prefs.edit().putString(KEY_VERSION, assetVersion).apply();
+        view.prewarmRoutes(routes, () ->
+                Log.i(TAG, kind + " routes rendered and image-decoded"));
+        return view;
     }
 
     private void attachHiddenViewIfNeeded(ExcavatorWebAppView view) {
@@ -134,13 +186,20 @@ final class ExcavatorWebAppPreloader {
             return;
         }
         cleanedUp = true;
-        destroyWarmedView();
+        destroyWarmedViews();
     }
 
-    private static void destroyWarmedView() {
-        ExcavatorWebAppView view = warmedView;
-        warmedView = null;
+    private static void destroyWarmedViews() {
+        ExcavatorWebAppView taskView = warmedTaskView;
+        ExcavatorWebAppView settingsView = warmedSettingsView;
+        warmedTaskView = null;
+        warmedSettingsView = null;
         warmedVersion = null;
+        destroyView(taskView);
+        destroyView(settingsView);
+    }
+
+    private static void destroyView(@Nullable ExcavatorWebAppView view) {
         if (view == null) {
             return;
         }

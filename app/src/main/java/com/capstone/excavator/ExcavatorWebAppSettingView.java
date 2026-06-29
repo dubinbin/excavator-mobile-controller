@@ -33,10 +33,15 @@ public class ExcavatorWebAppSettingView extends ExcavatorPostureView {
     }
 
     static void setNextInitialPage(int page) {
-        if (page < 0 || page >= SETTINGS_ROUTES.length) {
-            page = 0;
-        }
-        nextInitialPage = page;
+        nextInitialPage = normalizePage(page);
+    }
+
+    static String getRouteForPage(int page) {
+        return SETTINGS_ROUTES[normalizePage(page)];
+    }
+
+    private static int normalizePage(int page) {
+        return page < 0 || page >= SETTINGS_ROUTES.length ? 0 : page;
     }
 
     @Override
