@@ -51,7 +51,7 @@ public final class LevelTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
     @Nullable
     private static volatile SurveyStoredListener surveyStoredListener;
 
-    private Phase phase = Phase.IDLE;
+    private volatile Phase phase = Phase.IDLE;
     private int pendingExpectAck = -1;
     @Nullable
     private StepCallback pendingCallback;
@@ -145,6 +145,31 @@ public final class LevelTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
             }
             targetTenthCm = TcuBusinessCodec.metersToTenthCm(designM);
         }
+        LevelTaskState.setPendingTargetHeightTenthCm(targetTenthCm);
+        sendAndWait(TcuBusinessCodec.MSG_LEVEL_PARAMS_ACK,
+                TcuBusinessCodec.buildLevelParams(targetTenthCm),
+                callback);
+    }
+
+    /**
+     * WebView 已在本地完成目标高程计算时，直接下发最终目标高程。
+     * <p>
+     * 这里接收的是最终设计高程，不再重复叠加测点高度；仍要求先完成 0x10/0x90，
+     * 以保证流程符合 imu.txt §6.2。
+     */
+    public void submitLevelParams(double targetHeightM, StepCallback callback) {
+        if (!ensureLink(callback)) {
+            return;
+        }
+        if (phase.ordinal() < Phase.SURVEY_DONE.ordinal() || !LevelTaskState.hasSurveyHeight()) {
+            fail(callback, "请先完成参考点测点");
+            return;
+        }
+        if (!Double.isFinite(targetHeightM)) {
+            fail(callback, "目标高程无效");
+            return;
+        }
+        int targetTenthCm = TcuBusinessCodec.metersToTenthCm(targetHeightM);
         LevelTaskState.setPendingTargetHeightTenthCm(targetTenthCm);
         sendAndWait(TcuBusinessCodec.MSG_LEVEL_PARAMS_ACK,
                 TcuBusinessCodec.buildLevelParams(targetTenthCm),

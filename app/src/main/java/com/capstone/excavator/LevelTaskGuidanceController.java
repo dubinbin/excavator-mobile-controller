@@ -69,6 +69,8 @@ public final class LevelTaskGuidanceController {
     private boolean pendingDesignSnapshot;
     /** 当前作业类型 */
     private TaskTypeState.Type activeGuidanceTask = TaskTypeState.Type.NONE;
+    /** 最近一帧 TCU 0x52 实时引导结果。 */
+    private TcuGuidanceState.Snapshot latestTcuGuidance;
 
     /** 速度方向卡阈值（厘米） */
     private static final float GAUGE_DIR_THRESHOLD_CM = 0.5f;
@@ -139,6 +141,7 @@ public final class LevelTaskGuidanceController {
             boolean useRealData) {
         if (guidanceRunning && !guidanceRunningPrev) {
             activeGuidanceTask = taskType;
+            latestTcuGuidance = TcuGuidanceState.getInstance().getLatest();
             setGaugeUnit(GaugeUnit.CM);
             resetLevelDepthSmoothing();
             designZLocal = null;
@@ -148,6 +151,7 @@ public final class LevelTaskGuidanceController {
             refresh(useRealData);
         } else if (!guidanceRunning && guidanceRunningPrev) {
             activeGuidanceTask = TaskTypeState.Type.NONE;
+            latestTcuGuidance = null;
             designZLocal = null;
             resetMockTipHeight();
             pendingDesignSnapshot = false;
@@ -184,6 +188,14 @@ public final class LevelTaskGuidanceController {
      */
     public void onImuUpdate(boolean useRealData) {
         tryCaptureDesignSnapshot(useRealData);
+        refresh(useRealData);
+    }
+
+    /** 收到 TCU 0x52 后立即刷新，不必等待下一帧 IMU 数据。 */
+    public void onTcuGuidanceUpdate(
+            TcuGuidanceState.Snapshot snapshot,
+            boolean useRealData) {
+        latestTcuGuidance = snapshot;
         refresh(useRealData);
     }
 
@@ -258,7 +270,7 @@ public final class LevelTaskGuidanceController {
         if (Double.isNaN(localTipZ)) {
             return Double.NaN;
         }
-        if (BucketTipHeightState.hasTipHeight()) {
+        if (BucketTipHeightState.hasFreshTipHeight()) {
             mockTipHeightM = Double.NaN;
             mockLocalTipZRefM = Double.NaN;
             return BucketTipHeightState.getTipHeightM();
@@ -305,7 +317,7 @@ public final class LevelTaskGuidanceController {
     }
 
     private String currentTipHeightSource() {
-        return BucketTipHeightState.hasTipHeight() ? "TCU_TIP_HEIGHT" : "MOCK_TIP_HEIGHT";
+        return BucketTipHeightState.hasFreshTipHeight() ? "TCU_TIP_HEIGHT" : "MOCK_TIP_HEIGHT";
     }
 
     private Double resolveLevelDesignElevationM() {
@@ -332,7 +344,17 @@ public final class LevelTaskGuidanceController {
         tryCaptureDesignSnapshot(useRealData);
 
         /** 作业运行状态前一次值 */
-        if (!guidanceRunningPrev || !useRealData) {
+        if (!guidanceRunningPrev) {
+            resetLevelDepthSmoothing();
+            zeroGaugesAndIndicators();
+            return;
+        }
+        Float tcuGuidanceErrorCm = resolveFreshTcuGuidanceErrorCm();
+        if (tcuGuidanceErrorCm != null) {
+            applyGuidanceValueCm(tcuGuidanceErrorCm);
+            return;
+        }
+        if (!useRealData) {
             resetLevelDepthSmoothing();
             zeroGaugesAndIndicators();
             return;
@@ -369,7 +391,11 @@ public final class LevelTaskGuidanceController {
         } else {
             rawValue = (float) (zTipNow - designZLocal);
         }
-        float value = smoothLevelDepthCm(rawValue);
+        applyGuidanceValueCm(rawValue);
+    }
+
+    private void applyGuidanceValueCm(float rawValueCm) {
+        float value = smoothLevelDepthCm(clampLevelDepthCm(rawValueCm));
         if (leftActivityGauge != null) {
             leftActivityGauge.setValue(value);
         }
@@ -383,6 +409,40 @@ public final class LevelTaskGuidanceController {
             rightSlopeGauge.setValue(value);
         }
         applySpeedIndicators(value);
+    }
+
+    private Float resolveFreshTcuGuidanceErrorCm() {
+        TcuGuidanceState.Snapshot snapshot = latestTcuGuidance;
+        if (snapshot == null || !snapshot.isFresh()) {
+            return null;
+        }
+        TcuGuidanceCodec.Data data = snapshot.data;
+        if (data == null
+                || data.taskState != TcuGuidanceCodec.TASK_ACTIVE
+                || !data.isModelValid()
+                || !featureMatchesTask(data.featureId, activeGuidanceTask)) {
+            return null;
+        }
+        if (data.hasGuidanceError()) {
+            return data.guidanceErrorTenthCm / 10f;
+        }
+        if (data.hasCurrentTipHeight() && data.hasTargetHeight()) {
+            return (data.currentTipHeightTenthCm - data.targetHeightTenthCm) / 10f;
+        }
+        return null;
+    }
+
+    private static boolean featureMatchesTask(int featureId, TaskTypeState.Type taskType) {
+        if (taskType == TaskTypeState.Type.LEVEL) {
+            return featureId == TcuBusinessCodec.FEATURE_LEVEL;
+        }
+        if (taskType == TaskTypeState.Type.DITCH) {
+            return featureId == TcuBusinessCodec.FEATURE_DITCH;
+        }
+        if (taskType == TaskTypeState.Type.SLOPE) {
+            return featureId == TcuBusinessCodec.FEATURE_SLOPE;
+        }
+        return false;
     }
 
     private void zeroGaugesAndIndicators() {

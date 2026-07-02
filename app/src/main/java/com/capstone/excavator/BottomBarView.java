@@ -197,18 +197,4 @@ public class BottomBarView extends FrameLayout {
         this.onBarToggleListener = listener;
     }
 
-    // ── Legacy data setters (no-op) ───────────────────────────────────
-
-    public void setAngles(float boom, float stick, float bucket,
-                          float cabinPitch, float cabinRoll) { }
-
-    public void setRtkLatLon(double lat, double lon) { }
-
-    public void setDepth(double depth) { }
-
-    public void setDelay(int ms) { }
-
-    public void setSignal(int percent) { }
-
-    public void setLiveStatus(boolean connected) { }
 }

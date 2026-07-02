@@ -46,7 +46,7 @@ public final class DitchTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
     @Nullable
     private static volatile SurveyStoredListener surveyStoredListener;
 
-    private Phase phase = Phase.IDLE;
+    private volatile Phase phase = Phase.IDLE;
     private int pendingExpectAck = -1;
     private int pendingSurveyPointId = -1;
     @Nullable

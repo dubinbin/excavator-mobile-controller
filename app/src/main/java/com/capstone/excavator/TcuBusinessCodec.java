@@ -26,6 +26,8 @@ public final class TcuBusinessCodec {
     public static final int MSG_TASK_CONFIRM_ACK = 0xC0;
     public static final int MSG_INIT_STATUS = 0x50;
     public static final int MSG_INIT_CONFIRM = 0xD0;
+    /** TCU 每 100 ms 主动上报当前高程、动态目标高程和引导偏差。 */
+    public static final int MSG_GUIDANCE_REPORT = 0x52;
 
     public static final int FEATURE_NONE = 0x00;
     public static final int FEATURE_LEVEL = 0x01;

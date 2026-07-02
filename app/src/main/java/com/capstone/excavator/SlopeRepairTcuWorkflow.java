@@ -40,7 +40,7 @@ public final class SlopeRepairTcuWorkflow implements TcuLinkHub.BusinessFrameLis
     @Nullable
     private static volatile SurveyStoredListener surveyStoredListener;
 
-    private Phase phase = Phase.IDLE;
+    private volatile Phase phase = Phase.IDLE;
     private int pendingExpectAck = -1;
     private int pendingSurveyPointId = -1;
     @Nullable
@@ -197,8 +197,15 @@ public final class SlopeRepairTcuWorkflow implements TcuLinkHub.BusinessFrameLis
             failPending(TcuBusinessCodec.resultMessage(result));
             return true;
         }
-        phase = activeFeature == TcuBusinessCodec.FEATURE_SLOPE ? Phase.FEATURE_ACTIVE : Phase.IDLE;
-        succeedPending();
+        if (activeFeature == TcuBusinessCodec.FEATURE_SLOPE) {
+            phase = Phase.FEATURE_ACTIVE;
+            succeedPending();
+        } else if (activeFeature == TcuBusinessCodec.FEATURE_NONE) {
+            phase = Phase.IDLE;
+            succeedPending();
+        } else {
+            failPending("ActiveFeature 异常: 0x" + Integer.toHexString(activeFeature));
+        }
         return true;
     }
 

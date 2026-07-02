@@ -2,6 +2,7 @@ package com.capstone.excavator;
 
 public final class BucketTipHeightState {
 
+    private static final long DEFAULT_FRESH_TIMEOUT_MS = 500L;
     private static volatile double tipHeightM = Double.NaN;
     private static volatile long updateTimeMs;
 
@@ -20,6 +21,18 @@ public final class BucketTipHeightState {
 
     public static boolean hasTipHeight() {
         return !Double.isNaN(tipHeightM) && !Double.isInfinite(tipHeightM);
+    }
+
+    public static boolean hasFreshTipHeight() {
+        return hasFreshTipHeight(DEFAULT_FRESH_TIMEOUT_MS);
+    }
+
+    public static boolean hasFreshTipHeight(long timeoutMs) {
+        if (!hasTipHeight() || updateTimeMs <= 0L) {
+            return false;
+        }
+        long age = System.currentTimeMillis() - updateTimeMs;
+        return age >= 0L && age <= Math.max(0L, timeoutMs);
     }
 
     public static double getTipHeightM() {

@@ -1,7 +1,6 @@
 package com.capstone.excavator;
 
 import android.content.Context;
-import android.os.Build;
 import android.util.AttributeSet;
 import android.webkit.WebSettings;
 
@@ -43,9 +42,7 @@ public class ExcavatorMapWeb extends ExcavatorPostureView {
 
     @Override
     protected void applyExtraWebSettings(WebSettings settings) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
-        }
+        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
     }
 
     /**

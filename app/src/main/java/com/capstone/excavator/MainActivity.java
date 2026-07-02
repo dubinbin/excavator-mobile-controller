@@ -1,6 +1,5 @@
 package com.capstone.excavator;
 
-import android.animation.ValueAnimator;
 import android.content.Intent;
 import android.os.Bundle;
 import android.os.Handler;
@@ -31,11 +30,6 @@ import com.skydroid.rcsdk.key.AirLinkKey;
 import com.skydroid.rcsdk.common.callback.KeyListener;
 import com.skydroid.rcsdk.common.callback.CompletionCallbackWith;
 
-import com.skydroid.fpvplayer.FPVWidget;
-import com.skydroid.fpvplayer.OnPlayerStateListener;
-import com.skydroid.fpvplayer.PlayerType;
-import com.skydroid.fpvplayer.RtspTransport;
-
 import eightbitlab.com.blurview.BlurTarget;
 import eightbitlab.com.blurview.BlurView;
 
@@ -51,12 +45,11 @@ public class MainActivity extends ScaledAppCompatActivity {
     private PostureCardView postureCardView;
     private BlurView postureCardBlur;
     private BlurView riseSpeedBlur;
-    private FPVWidget fpvWidget;
+    private FpvVideoController fpvVideoController;
+    private final ImuHeaderStatusController imuHeaderStatus = new ImuHeaderStatusController();
     private ExcavatorMapWeb mapView;
     private View mapCardContainer;
     private BlurView rightPanelBlur;
-    private View videoPlaceholder;
-    private View noLiveVideoOverlay;
     private View rightPanelHeader;
     private View rightPanelBody;
     private View rightPanelCollapseArrow;
@@ -83,6 +76,8 @@ public class MainActivity extends ScaledAppCompatActivity {
             (newType, oldType) -> runOnUiThread(this::applyTaskOverlayVisibility);
     private final WorkRunState.OnStateChangeListener workStateListener =
             (newState, oldState) -> runOnUiThread(this::applyTaskOverlayVisibility);
+    private final TcuGuidanceState.OnUpdateListener tcuGuidanceListener =
+            snapshot -> runOnUiThread(() -> onTcuGuidanceSnapshot(snapshot));
 
     // 数据更新Handler
     private Handler handler;
@@ -118,16 +113,10 @@ public class MainActivity extends ScaledAppCompatActivity {
     private static final long UDP_TIMEOUT_MS = 5000; // 5秒没收到数据就切换回模拟数据
 
     private long lastDataReceiveTime = 0;
-    /** 最近一次成功解析的 {@code 0xFA} IMU 帧，供 {@code 0x51}/{@code 0x50} 到达后重渲染顶栏 IMU 颜色 */
-    private IMUDataParser.ParsedData lastUdpImuParsedSnapshot;
     // 心跳 RTT 测量相关
     private Handler heartbeatHandler;
     private Runnable heartbeatRunnable;
     private static final long HEARTBEAT_INTERVAL_MS = 1000; // 心跳间隔 1 秒
-    // 心跳帧格式：0xFB 0xFB + 1字节类型(0x01) + 8字节时间戳 + 19字节填充 + CRC(2字节) + 0xFF = 33字节
-    private static final byte HEARTBEAT_HEADER_1 = (byte) 0xFB;
-    private static final byte HEARTBEAT_HEADER_2 = (byte) 0xFB;
-    private static final byte HEARTBEAT_TYPE     = (byte) 0x01;
     // 摇杆值
     private int ch1Value = 0; // 右摇杆左右
     private int ch2Value = 0; // 右摇杆上下
@@ -141,7 +130,6 @@ public class MainActivity extends ScaledAppCompatActivity {
     
     // 视频流地址（默认；持久化见 {@link ControllerLocalSettings}）
     private static final String DEFAULT_VIDEO_URL = "rtsp://192.168.144.25:8554/main.264";
-    private String currentVideoUrl = DEFAULT_VIDEO_URL;
     private static final int REQUEST_SETTINGS = 1001;
     
     @Override
@@ -170,6 +158,9 @@ public class MainActivity extends ScaledAppCompatActivity {
         super.onStart();
         TaskTypeState.getInstance().addListener(taskTypeListener);
         WorkRunState.getInstance().addListener(workStateListener);
+        TcuGuidanceState.getInstance().addListener(tcuGuidanceListener);
+        levelTaskGuidance.onTcuGuidanceUpdate(
+                TcuGuidanceState.getInstance().getLatest(), useRealData);
         applyTaskOverlayVisibility();
     }
 
@@ -177,14 +168,9 @@ public class MainActivity extends ScaledAppCompatActivity {
     protected void onStop() {
         TaskTypeState.getInstance().removeListener(taskTypeListener);
         WorkRunState.getInstance().removeListener(workStateListener);
+        TcuGuidanceState.getInstance().removeListener(tcuGuidanceListener);
         super.onStop();
     }
-
-    /**
-     * 首次 onResume 紧跟 {@link #onCreate} 的 {@link #initVideoPlayer()}（已经 start 过 fpv），
-     * 跳过一次 start 避免双启动。后续 onResume 会重新 start。
-     */
-    private boolean fpvFirstResumeSkipped = false;
 
     @Override
     protected void onResume() {
@@ -194,16 +180,7 @@ public class MainActivity extends ScaledAppCompatActivity {
         }
         if (mapView != null) mapView.resume();
         if (postureCardView != null) postureCardView.onActivityResume();
-        if (!fpvFirstResumeSkipped) {
-            fpvFirstResumeSkipped = true;
-            // initVideoPlayer 在 onCreate 中已经 start 过，不再重复 start。
-        } else if (fpvWidget != null) {
-            try {
-                fpvWidget.start();
-            } catch (Throwable t) {
-                Log.w("MainActivity", "fpvWidget.start onResume failed: " + t.getMessage());
-            }
-        }
+        if (fpvVideoController != null) fpvVideoController.onResume();
         // UDP 已连且 onPause 时停过心跳：重新拉起。startHeartbeat 内部会幂等清理旧 runnable。
         if (udpPipeline != null && (udpPipeline.isConnected() || TcuLinkHub.isTrafficAlive())) {
             startHeartbeat();
@@ -215,14 +192,8 @@ public class MainActivity extends ScaledAppCompatActivity {
 
     @Override
     protected void onPause() {
-        // 1) FPV：解码器在 Activity 不可见时仍持有 GPU 表面会浪费功耗，且回到前台时常见黑屏 / 抖动。
-        if (fpvWidget != null) {
-            try {
-                fpvWidget.stop();
-            } catch (Throwable t) {
-                Log.w("MainActivity", "fpvWidget.stop onPause failed: " + t.getMessage());
-            }
-        }
+        // 1) FPV：Activity 不可见时释放解码器持有的 GPU 表面。
+        if (fpvVideoController != null) fpvVideoController.onPause();
         // 2) WebView：天地图 / 姿态 WebView 的 requestAnimationFrame、JS 计时器在背景仍会跑。
         if (mapView != null) mapView.pause();
         if (postureCardView != null) postureCardView.onActivityPause();
@@ -248,9 +219,15 @@ public class MainActivity extends ScaledAppCompatActivity {
     }
 
     private void openGeneralSettingsPage() {
+        openSettingsPage(SettingsActivity.PAGE_GENERAL);
+    }
+
+    private void openSettingsPage(Integer initialPage) {
         Intent intent = new Intent(MainActivity.this, SettingsActivity.class);
-        intent.putExtra("current_url", currentVideoUrl);
-        intent.putExtra(SettingsActivity.EXTRA_INITIAL_PAGE, SettingsActivity.PAGE_GENERAL);
+        intent.putExtra("current_url", fpvVideoController.getCurrentUrl());
+        if (initialPage != null) {
+            intent.putExtra(SettingsActivity.EXTRA_INITIAL_PAGE, initialPage);
+        }
         startActivityForResult(intent, REQUEST_SETTINGS);
     }
     
@@ -315,10 +292,24 @@ public class MainActivity extends ScaledAppCompatActivity {
     }
 
     private void initViews() {
+        bindViews();
+        configurePostureAndMapPanel();
+        configureHeader();
+        configureBottomBar();
+        setReceiverLinkConnected(false);
+        applyTaskOverlayVisibility();
+    }
+
+    private void bindViews() {
         postureCardView = findViewById(R.id.postureCardView);
         postureCardBlur = findViewById(R.id.postureCardBlur);
         riseSpeedBlur = findViewById(R.id.riseSpeedBlur);
-        fpvWidget            = findViewById(R.id.fpvWidget);
+        fpvVideoController = new FpvVideoController(
+                this,
+                findViewById(R.id.fpvWidget),
+                findViewById(R.id.videoPlaceholder),
+                findViewById(R.id.noLiveVideoOverlay),
+                DEFAULT_VIDEO_URL);
         View mapSlot = findViewById(R.id.mapView);
         mapView = (mapSlot instanceof ExcavatorMapWeb) ? (ExcavatorMapWeb) mapSlot : null;
         mapCardContainer     = findViewById(R.id.mapCardContainer);
@@ -326,8 +317,6 @@ public class MainActivity extends ScaledAppCompatActivity {
         rightPanelHeader     = findViewById(R.id.rightPanelHeader);
         rightPanelBody       = findViewById(R.id.rightPanelBody);
         rightPanelCollapseArrow = findViewById(R.id.rightPanelCollapseArrow);
-        videoPlaceholder     = findViewById(R.id.videoPlaceholder);
-        noLiveVideoOverlay   = findViewById(R.id.noLiveVideoOverlay);
         livePillBlur         = findViewById(R.id.livePillBlur);
         referencePointTitleBar = findViewById(R.id.referencePointTitleBar);
         centerActivityPanelView = findViewById(R.id.centerActivityPanelView);
@@ -337,10 +326,18 @@ public class MainActivity extends ScaledAppCompatActivity {
         verticalActivityPanelLeft = findViewById(R.id.verticalActivityPanelLeft);
         verticalActivityPanelRight = findViewById(R.id.verticalActivityPanelRight);
         joystickRawDebugText = findViewById(R.id.joystickRawDebugText);
+        motionModeSegment = findViewById(R.id.motionModeSegment);
+        headerBar = findViewById(R.id.headerBar);
+        emergencyStopOverlay = findViewById(R.id.emergencyStopOverlay);
+        bottomBar = findViewById(R.id.bottomBar);
+        confirmDialog = findViewById(R.id.confirmDialog);
+        inlineToast = findViewById(R.id.inlineToast);
+    }
+
+    private void configurePostureAndMapPanel() {
         updateJoystickRawDebugText();
         levelTaskGuidance.setImuAngleConfig(imuAngleConfig);
         levelTaskGuidance.bind(this);
-        motionModeSegment = findViewById(R.id.motionModeSegment);
         if (motionModeSegment != null) {
             motionModeSegment.setOnIndexChangeListener(this::onMotionModeChanged);
         }
@@ -360,14 +357,13 @@ public class MainActivity extends ScaledAppCompatActivity {
 
         setupOverlayBlurs();
         setupCollapsibleCards();
+    }
 
-        // ── Header component ────────────────────────────────────────
-        headerBar = findViewById(R.id.headerBar);
+    private void configureHeader() {
+        imuHeaderStatus.bind(headerBar);
         headerBar.setMode("手动模式");
-        setSensorStatusesOffline();
+        imuHeaderStatus.setOffline();
 
-        // ── 急停覆盖层 ───────────────────────────────────────────────
-        emergencyStopOverlay = findViewById(R.id.emergencyStopOverlay);
         headerBar.setOnEmergencyStopListener(() -> {
             if (emergencyStopOverlay != null) emergencyStopOverlay.show();
         });
@@ -375,67 +371,46 @@ public class MainActivity extends ScaledAppCompatActivity {
             emergencyStopOverlay.setOnDismissListener(() ->
                     Toast.makeText(this, "急停已解除", Toast.LENGTH_SHORT).show());
         }
+    }
 
-        // ── Bottom bar component ─────────────────────────────────────
-        bottomBar = findViewById(R.id.bottomBar);
+    private void configureBottomBar() {
+        bottomBar.setOnReconnectListener(fpvVideoController::reconnect);
+        bottomBar.setOnSettingsListener(() -> openSettingsPage(null));
+        bottomBar.setOnLevelListener(() ->
+                openWebAppRoute(ExcavatorWebAppView.ROUTE_LEVELING_TASK_STEP1));
+        bottomBar.setOnTrenchListener(() ->
+                openWebAppRoute(ExcavatorWebAppView.ROUTE_DIG_TASK_STEP1));
+        bottomBar.setOnSlopeListener(() ->
+                openWebAppRoute(ExcavatorWebAppView.ROUTE_REPAIR_SLOPE_STEP1));
+        bottomBar.setOnEndListener(this::showEndTaskConfirmation);
+        bottomBar.setOnPauseListener(this::toggleWorkPaused);
+    }
 
-        bottomBar.setOnReconnectListener(this::reconnectVideo);
+    private void showEndTaskConfirmation() {
+        if (confirmDialog == null) {
+            return;
+        }
+        confirmDialog.show(new ConfirmDialogView.Config.Builder("确认退出当前任务?")
+                .subtitle("")
+                .confirmText("确认退出")
+                .cancelText("取消")
+                .onConfirm(() -> {
+                    TaskTypeState.Type endingType = TaskTypeState.getInstance().getType();
+                    clearTaskSessionOnEnd(endingType);
+                    WorkRunState.getInstance().setState(WorkRunState.State.ENDED);
+                    TaskTypeState.getInstance().setType(TaskTypeState.Type.NONE);
+                    if (inlineToast != null) inlineToast.showMessage("任务已终止");
+                })
+                .build());
+    }
 
-        bottomBar.setOnSettingsListener(() -> {
-            Intent intent = new Intent(MainActivity.this, SettingsActivity.class);
-            intent.putExtra("current_url", currentVideoUrl);
-            startActivityForResult(intent, REQUEST_SETTINGS);
-        });
-
-        bottomBar.setOnLevelListener(() -> {
-            openWebAppRoute(ExcavatorWebAppView.ROUTE_LEVELING_TASK_STEP1);
-        });
-        
-
-        bottomBar.setOnTrenchListener(() -> {
-            openWebAppRoute(ExcavatorWebAppView.ROUTE_DIG_TASK_STEP1);
-        });
-
-        bottomBar.setOnSlopeListener(() -> {
-            openWebAppRoute(ExcavatorWebAppView.ROUTE_REPAIR_SLOPE_STEP1);
-        });
-
-        // ── 通用弹窗 / Toast ─────────────────────────────────────────
-        confirmDialog = findViewById(R.id.confirmDialog);
-        inlineToast   = findViewById(R.id.inlineToast);
-
-        // 「结束」按钮：弹二次确认弹窗
-        bottomBar.setOnEndListener(() -> {
-            if (confirmDialog == null) return;
-            confirmDialog.show(new ConfirmDialogView.Config.Builder("确认退出当前任务?")
-                    .subtitle("")
-                    .confirmText("确认退出")
-                    .cancelText("取消")
-                    .onConfirm(() -> {
-                        TaskTypeState.Type endingType = TaskTypeState.getInstance().getType();
-                        clearTaskSessionOnEnd(endingType);
-                        WorkRunState.getInstance().setState(WorkRunState.State.ENDED);
-                        TaskTypeState.getInstance().setType(TaskTypeState.Type.NONE);
-                        if (inlineToast != null) inlineToast.showMessage("任务已终止");
-                    })
-                    .build());
-        });
-
-        // 「暂停」按钮：在 RUNNING↔PAUSED 之间切换
-        bottomBar.setOnPauseListener(() -> {
-            WorkRunState.State cur = WorkRunState.getInstance().getState();
-            if (cur == WorkRunState.State.RUNNING) {
-                WorkRunState.getInstance().setState(WorkRunState.State.PAUSED);
-            } else if (cur == WorkRunState.State.PAUSED) {
-                WorkRunState.getInstance().setState(WorkRunState.State.RUNNING);
-            }
-        });
-
-        // 初始状态：视频与接收机链路均未连接
-        setVideoConnected(false);
-        setReceiverLinkConnected(false);
-
-        applyTaskOverlayVisibility();
+    private void toggleWorkPaused() {
+        WorkRunState.State current = WorkRunState.getInstance().getState();
+        if (current == WorkRunState.State.RUNNING) {
+            WorkRunState.getInstance().setState(WorkRunState.State.PAUSED);
+        } else if (current == WorkRunState.State.PAUSED) {
+            WorkRunState.getInstance().setState(WorkRunState.State.RUNNING);
+        }
     }
 
     private void openWebAppRoute(String route) {
@@ -571,76 +546,17 @@ public class MainActivity extends ScaledAppCompatActivity {
             View header = postureCardView.findViewById(R.id.postureHeaderRow);
             View body = postureCardView.findViewById(R.id.postureBody);
             View arrow = postureCardView.findViewById(R.id.postureCollapseArrow);
-            setupOneCollapsible(postureCardBlur, header, body, arrow);
+            CollapsibleCardController.bind(postureCardBlur, header, body, arrow);
         }
 
         // Right panel
         if (rightPanelBlur != null && rightPanelHeader != null && rightPanelBody != null) {
-            setupOneCollapsible(rightPanelBlur, rightPanelHeader, rightPanelBody, rightPanelCollapseArrow);
+            CollapsibleCardController.bind(
+                    rightPanelBlur,
+                    rightPanelHeader,
+                    rightPanelBody,
+                    rightPanelCollapseArrow);
         }
-    }
-
-    private void setupOneCollapsible(View container, View header, View body, View arrow) {
-        if (container == null || header == null || body == null) return;
-
-        final boolean[] collapsed = { false };
-        final int[] expandedH = { -1 };
-        final int[] collapsedH = { -1 };
-
-        container.post(() -> {
-            expandedH[0] = container.getHeight();
-            collapsedH[0] = header.getHeight();
-        });
-
-        Runnable expand = () -> {
-            if (!collapsed[0]) return;
-            collapsed[0] = false;
-            body.setVisibility(View.VISIBLE);
-            int from = container.getLayoutParams().height > 0 ? container.getLayoutParams().height : collapsedH[0];
-            int to = expandedH[0] > 0 ? expandedH[0] : container.getHeight();
-            animateHeight(container, from, to, () -> {});
-            if (arrow != null) arrow.animate().rotation(0f).setDuration(180).start();
-        };
-
-        Runnable collapse = () -> {
-            if (collapsed[0]) return;
-            collapsed[0] = true;
-            int from = container.getHeight();
-            int to = collapsedH[0] > 0 ? collapsedH[0] : header.getHeight();
-            animateHeight(container, from, to, () -> body.setVisibility(View.GONE));
-            if (arrow != null) arrow.animate().rotation(180f).setDuration(180).start();
-        };
-
-        if (arrow != null) {
-            arrow.setOnClickListener(v -> {
-                if (collapsed[0]) expand.run();
-                else collapse.run();
-            });
-        }
-
-        header.setOnClickListener(v -> {
-            if (collapsed[0]) expand.run();
-        });
-    }
-
-    private void animateHeight(View v, int from, int to, Runnable endAction) {
-        if (from == to) {
-            if (endAction != null) endAction.run();
-            return;
-        }
-        ViewGroup.LayoutParams lp = v.getLayoutParams();
-        ValueAnimator animator = ValueAnimator.ofInt(from, to);
-        animator.setDuration(220);
-        animator.addUpdateListener(a -> {
-            lp.height = (int) a.getAnimatedValue();
-            v.setLayoutParams(lp);
-        });
-        animator.addListener(new android.animation.AnimatorListenerAdapter() {
-            @Override public void onAnimationEnd(android.animation.Animator animation) {
-                if (endAction != null) endAction.run();
-            }
-        });
-        animator.start();
     }
 
 
@@ -717,39 +633,7 @@ public class MainActivity extends ScaledAppCompatActivity {
      * 初始化视频播放器
      */
     private void initVideoPlayer() {
-        if (fpvWidget == null) return;
-
-        ControllerLocalSettings.Snapshot snap = ControllerLocalSettings.load(this);
-        if (snap.videoStreamUrl != null && !snap.videoStreamUrl.isEmpty()) {
-            currentVideoUrl = snap.videoStreamUrl;
-        }
-
-        fpvWidget.setUsingMediaCodec(true);
-        fpvWidget.setUrl(currentVideoUrl);
-        fpvWidget.setPlayerType(PlayerType.ONLY_SKY);
-        fpvWidget.setRtspTranstype(RtspTransport.AUTO);
-
-        // 禁止自动重连：连接失败后不再自动重试
-        fpvWidget.setReConnectInterceptor(() -> false);
-
-        // 监听连接状态，更新 LIVE 指示器
-        fpvWidget.setOnPlayerStateListener(new OnPlayerStateListener() {
-            @Override
-            public void onConnected() {
-                runOnUiThread(() -> setVideoConnected(true));
-            }
-
-            @Override
-            public void onDisconnect() {
-                runOnUiThread(() -> setVideoConnected(false));
-            }
-
-            @Override
-            public void onReadFrame(com.skydroid.fpvplayer.ffmpeg.FrameInfo frameInfo) {
-            }
-        });
-
-        fpvWidget.start();
+        fpvVideoController.initialize();
     }
 
     private void setReceiverLinkConnected(boolean connected) {
@@ -776,132 +660,6 @@ public class MainActivity extends ScaledAppCompatActivity {
         receiverLinkAlive = true;
         runOnUiThread(() -> setReceiverLinkConnected(true));
     }
-
-    private void setVideoConnected(boolean connected) {
-        if (bottomBar != null) bottomBar.setLiveStatus(connected);
-        if (videoPlaceholder != null)
-            videoPlaceholder.setVisibility(connected ? View.GONE : View.VISIBLE);
-        if (noLiveVideoOverlay != null)
-            noLiveVideoOverlay.setVisibility(connected ? View.GONE : View.VISIBLE);
-    }
-
-    private void reconnectVideo() {
-        if (fpvWidget == null) return;
-        fpvWidget.stop();
-        fpvWidget.setUrl(currentVideoUrl);
-        fpvWidget.start();
-        Toast.makeText(this, "正在重新连接...", Toast.LENGTH_SHORT).show();
-    }
-    
-    
-    /**
-     * 更新视频地址
-     */
-    private void updateVideoUrl(String url) {
-        if (fpvWidget != null) {
-            try {
-                // 停止当前播放
-                fpvWidget.stop();
-                
-                // 记录并设置新地址
-                currentVideoUrl = url;
-                fpvWidget.setUrl(url);
-                ControllerLocalSettings.saveVideoStreamUrl(MainActivity.this, url);
-
-                // 重新开始播放
-                fpvWidget.start();
-                
-                Toast.makeText(this, "视频地址已更新", Toast.LENGTH_SHORT).show();
-                Log.d("MainActivity", "视频地址更新为: " + url);
-            } catch (Exception e) {
-                Log.e("MainActivity", "更新视频地址失败: " + e.getMessage(), e);
-                Toast.makeText(this, "更新失败: " + e.getMessage(), Toast.LENGTH_SHORT).show();
-            }
-        }
-    }
-
-    private void setSensorStatusesOffline() {
-        RtkState.clear();
-        ImuStatusState.clear();
-        ImuRealtimeState.clear();
-        BucketTipHeightState.clear();
-        lastUdpImuParsedSnapshot = null;
-        if (headerBar != null) {
-            headerBar.setRtkOnline(false);
-            headerBar.setImuStatus(ImuStatusState.getOnlineCount(), ImuStatusState.TOTAL_COUNT, false);
-        }
-    }
-
-    private void updateSensorStatuses(IMUDataParser.ParsedData parsed) {
-        if (parsed == null) {
-            return;
-        }
-        lastUdpImuParsedSnapshot = parsed;
-        ImuStatusState.setOnlineCount(countOnlineImus(parsed));
-        if (headerBar == null) {
-            return;
-        }
-        boolean imuHealthyGreen = imuHeaderShowsHealthyGreen(parsed);
-        headerBar.setImuStatus(ImuStatusState.getOnlineCount(), ImuStatusState.TOTAL_COUNT, imuHealthyGreen);
-        headerBar.setRtkOnline(isValidRtk(parsed.rtkLat, parsed.rtkLon));
-    }
-
-    /**
-     * 顶栏 IMU 绿色：需角度通道满；且若 TCU {@code 0x50}/{@code 0x51} 位图 IMU(bit6)=0 则绝不绿；
-     * 位图未知时，若五路角全为 0 视为「无 IMU 占位」不绿（与现场约定一致）。
-     */
-    private boolean imuHeaderShowsHealthyGreen(IMUDataParser.ParsedData p) {
-        int oc = countOnlineImus(p);
-        if (oc != ImuStatusState.TOTAL_COUNT) {
-            return false;
-        }
-        if (ImuStatusState.tcuDeniesImuHealthyGreen()) {
-            return false;
-        }
-        if (ImuStatusState.tcuAssertsImuHealthyGreen()) {
-            return true;
-        }
-        return !isAllImuAnglesEffectivelyZero(p);
-    }
-
-    private static boolean isAllImuAnglesEffectivelyZero(IMUDataParser.ParsedData p) {
-        final float eps = 1e-4f;
-        return Math.abs(p.boomAngle) < eps
-                && Math.abs(p.stickAngle) < eps
-                && Math.abs(p.bucketAngle) < eps
-                && Math.abs(p.cabinPitchAngle) < eps
-                && Math.abs(p.cabinRollAngle) < eps;
-    }
-
-    private void refreshHeaderImuFromTcuLinkState() {
-        if (headerBar == null) {
-            return;
-        }
-        IMUDataParser.ParsedData p = lastUdpImuParsedSnapshot;
-        boolean imuHealthyGreen = p != null && imuHeaderShowsHealthyGreen(p);
-        headerBar.setImuStatus(ImuStatusState.getOnlineCount(), ImuStatusState.TOTAL_COUNT, imuHealthyGreen);
-        if (p != null) {
-            headerBar.setRtkOnline(isValidRtk(p.rtkLat, p.rtkLon));
-        }
-    }
-
-    private int countOnlineImus(IMUDataParser.ParsedData parsed) {
-        int online = 0;
-        if (isFinite(parsed.boomAngle)) online++;
-        if (isFinite(parsed.stickAngle)) online++;
-        if (isFinite(parsed.bucketAngle)) online++;
-        if (isFinite(parsed.cabinPitchAngle) && isFinite(parsed.cabinRollAngle)) online++;
-        return online;
-    }
-
-    private static boolean isFinite(float value) {
-        return !Float.isNaN(value) && !Float.isInfinite(value);
-    }
-
-    private static boolean isValidRtk(double lat, double lon) {
-        return RtkState.isValidCoordinate(lat, lon);
-    }
-
 
     private void startDataUpdates() {
         // 主数据更新Handler（1秒更新一次）
@@ -953,17 +711,13 @@ public class MainActivity extends ScaledAppCompatActivity {
         }
     }
 
+    private void onTcuGuidanceSnapshot(TcuGuidanceState.Snapshot snapshot) {
+        levelTaskGuidance.onTcuGuidanceUpdate(snapshot, useRealData);
+    }
+
     /** UDP 心跳测得的链路 RTT（毫秒），同步到底栏占位接口与顶栏显示。 */
     private void notifyLinkLatencyMs(int ms) {
-        if (bottomBar != null) bottomBar.setDelay(ms);
         if (headerBar != null) headerBar.setLinkLatencyMs(ms);
-    }
-    
-    /**
-     * 更新信号强度显示
-     */
-    private void updateSignalDisplay() {
-        if (bottomBar != null) bottomBar.setSignal(currentSignalStrength);
     }
 
     private void updateAngles() {
@@ -1001,10 +755,6 @@ public class MainActivity extends ScaledAppCompatActivity {
             );
         }
         // 推送到 BottomBarView 组件
-        if (bottomBar != null) {
-            bottomBar.setAngles(rawBoom, rawStick, rawBucket,
-                    rawCabinPitch, rawCabinRoll);
-        }
         if (useRealData) {
             levelTaskGuidance.setImuAngles(rawBoom, rawStick, rawBucket);
             ImuRealtimeState.update(rawBoom, rawStick, rawBucket, rawCabinPitch, rawCabinRoll);
@@ -1027,7 +777,6 @@ public class MainActivity extends ScaledAppCompatActivity {
         }
 
         if (mapView != null) mapView.setFixedLocation(lat, lon, 0.0);
-        if (bottomBar != null) bottomBar.setRtkLatLon(lat, lon);
     }
 
 //    private void updateDigDepth() {
@@ -1208,13 +957,6 @@ public class MainActivity extends ScaledAppCompatActivity {
             public void onValueChange(Integer oldValue, Integer newValue) {
                 // newValue 是信号强度百分比 (0-100)
                 currentSignalStrength = newValue != null ? newValue : 0;
-                // 在主线程更新UI
-                runOnUiThread(new Runnable() {
-                    @Override
-                    public void run() {
-                        updateSignalDisplay();
-                    }
-                });
             }
         };
         KeyManager.INSTANCE.listen(AirLinkKey.INSTANCE.getKeySignalQuality(), keySignalQualityListener);
@@ -1246,7 +988,7 @@ public class MainActivity extends ScaledAppCompatActivity {
             udpPipeline = null;
         }
         // 创建UDP管道：本地端口14551，发送到127.0.0.1:14552
-        udpPipeline = PipelineManager.INSTANCE.createUDPPipeline(14551, "192.168.192.157", 14552);
+        udpPipeline = PipelineManager.INSTANCE.createUDPPipeline(14551, "192.168.20.147", 14552);
 
         bindTcuLinkHub();
         // 设置通信监听器
@@ -1274,8 +1016,9 @@ public class MainActivity extends ScaledAppCompatActivity {
                     @Override
                     public void run() {
                         useRealData = false; // 连接失败，使用模拟数据
+                        TcuGuidanceState.getInstance().clear();
                         setReceiverLinkConnected(false);
-                        setSensorStatusesOffline();
+                        imuHeaderStatus.setOffline();
                         notifyLinkLatencyMs(-1);
                         Toast.makeText(MainActivity.this, "UDP连接失败，使用模拟数据", Toast.LENGTH_SHORT).show();
                     }
@@ -1290,11 +1033,11 @@ public class MainActivity extends ScaledAppCompatActivity {
                     @Override
                     public void run() {
                         useRealData = false; // 切换回模拟数据
+                        TcuGuidanceState.getInstance().clear();
                         setReceiverLinkConnected(false);
                         TcuLinkHub.setSender(null);
-    TcuInitHandshake.reset();
                         TcuInitHandshake.reset();
-                        setSensorStatusesOffline();
+                        imuHeaderStatus.setOffline();
                         notifyLinkLatencyMs(-1);
                         Toast.makeText(MainActivity.this, "UDP断开连接", Toast.LENGTH_SHORT).show();
                     }
@@ -1310,7 +1053,7 @@ public class MainActivity extends ScaledAppCompatActivity {
                     // §6.1：0x50 初始化 → 自动回 0xD0，TCU 进入主程序后才发 0xFA 实时流
                     if (TcuInitHandshake.tryHandle(data)) {
                         runOnUiThread(() -> {
-                            refreshHeaderImuFromTcuLinkState();
+                            imuHeaderStatus.refreshFromTcuLinkState();
                             if (TcuInitHandshake.isMainProgramEntered()) {
                                 Toast.makeText(MainActivity.this,
                                         "TCU 初始化完成，等待实时数据…",
@@ -1322,7 +1065,7 @@ public class MainActivity extends ScaledAppCompatActivity {
 
                     // 0x51 链路心跳 LinkBitmap——与 33 字节实时流分离
                     if (TcuBusinessFrameParser.tryConsumeAndUpdateImuLink(data)) {
-                        runOnUiThread(MainActivity.this::refreshHeaderImuFromTcuLinkState);
+                        runOnUiThread(imuHeaderStatus::refreshFromTcuLinkState);
                         return;
                     }
 
@@ -1330,16 +1073,8 @@ public class MainActivity extends ScaledAppCompatActivity {
                         return;
                     }
 
-                    // 优先判断是否为心跳回包（header = 0xFB 0xFB）
-                    if (data.length == 33
-                            && data[0] == HEARTBEAT_HEADER_1
-                            && data[1] == HEARTBEAT_HEADER_2
-                            && data[2] == HEARTBEAT_TYPE) {
-                        // 从帧中还原发送时间戳（big-endian，frame[3..10]）
-                        long sendTs = 0;
-                        for (int i = 0; i < 8; i++) {
-                            sendTs = (sendTs << 8) | (data[3 + i] & 0xFF);
-                        }
+                    Long sendTs = TcuHeartbeatCodec.readTimestamp(data);
+                    if (sendTs != null) {
                         if (sendTs > 0) {
                             int rtt = (int) (System.currentTimeMillis() - sendTs);
                             Log.d("RTT", "收到心跳回包，RTT=" + rtt + "ms");
@@ -1388,7 +1123,7 @@ public class MainActivity extends ScaledAppCompatActivity {
                                         useRealData = true;
                                         Log.d("UDP", "收到UDP数据，切换到真实数据模式");
                                     }
-                                    updateSensorStatuses(parsed);
+                                    imuHeaderStatus.update(parsed);
                                     if (udpTimeoutHandler != null && udpTimeoutRunnable != null) {
                                         udpTimeoutHandler.removeCallbacks(udpTimeoutRunnable);
                                     }
@@ -1407,7 +1142,8 @@ public class MainActivity extends ScaledAppCompatActivity {
                                 Log.e("UDP", "数据解析失败: " + error);
                                 runOnUiThread(() -> {
                                     useRealData = false;
-                                    setSensorStatusesOffline();
+                                    TcuGuidanceState.getInstance().clear();
+                                    imuHeaderStatus.setOffline();
                                     notifyLinkLatencyMs(-1);
                                 });
                             }
@@ -1430,33 +1166,6 @@ public class MainActivity extends ScaledAppCompatActivity {
     }
     
     /**
-     * 构建心跳帧（33字节）。
-     * 格式：0xFB 0xFB | type(1) | timestamp(8, big-endian) | padding(19) | CRC16(2) | 0xFF
-     * 机载端识别到 header=0xFB 0xFB 且 type=0x01 时，原样将整帧回传给 App。
-     */
-    private byte[] buildHeartbeatFrame(long timestamp) {
-        byte[] frame = new byte[33];
-        frame[0] = HEARTBEAT_HEADER_1;
-        frame[1] = HEARTBEAT_HEADER_2;
-        // data 区（28字节，偏移2~29）
-        frame[2] = HEARTBEAT_TYPE;
-        // 8字节时间戳（big-endian），放在 data[1..8]（即 frame[3..10]）
-        for (int i = 0; i < 8; i++) {
-            frame[3 + i] = (byte) ((timestamp >> (56 - 8 * i)) & 0xFF);
-        }
-        // 剩余 19 字节填充 0（frame[11..29] 已为 0）
-        // CRC 计算范围：data 区 28 字节（frame[2..29]）
-        byte[] dataForCrc = new byte[28];
-        System.arraycopy(frame, 2, dataForCrc, 0, 28);
-        int crc = CRC16Modbus.calculateCRC16Modbus(dataForCrc);
-        byte[] crcBytes = CRC16Modbus.crcToBytes(crc);
-        frame[30] = crcBytes[0];
-        frame[31] = crcBytes[1];
-        frame[32] = (byte) 0xFF;
-        return frame;
-    }
-
-    /**
      * 启动心跳定时器，每秒向机载端发送一次心跳帧。
      * 机载端收到后原样回传，App 在 onReadData 中计算 RTT。
      */
@@ -1470,7 +1179,7 @@ public class MainActivity extends ScaledAppCompatActivity {
             public void run() {
                 if (udpPipeline != null && udpPipeline.isConnected()) {
                     long sendTime = System.currentTimeMillis();
-                    udpPipeline.writeData(buildHeartbeatFrame(sendTime));
+                    udpPipeline.writeData(TcuHeartbeatCodec.buildFrame(sendTime));
                     Log.d("RTT", "心跳已发送，时间戳: " + sendTime);
                 }
                 heartbeatHandler.postDelayed(this, HEARTBEAT_INTERVAL_MS);
@@ -1506,12 +1215,13 @@ public class MainActivity extends ScaledAppCompatActivity {
                 if (useRealData && (currentTime - lastDataReceiveTime) > UDP_TIMEOUT_MS) {
                     // 超过5秒没收到数据，切换回模拟数据
                     useRealData = false;
+                    TcuGuidanceState.getInstance().clear();
                     stopHeartbeat(); // 停止心跳，不再测量延迟
                     Log.w("UDP", "UDP数据接收超时，切换回模拟数据");
                     runOnUiThread(new Runnable() {
                         @Override
                         public void run() {
-                            setSensorStatusesOffline();
+                            imuHeaderStatus.setOffline();
                             notifyLinkLatencyMs(-1);
                             Toast.makeText(MainActivity.this, "UDP数据超时，使用模拟数据", Toast.LENGTH_SHORT).show();
                         }
@@ -1534,7 +1244,7 @@ public class MainActivity extends ScaledAppCompatActivity {
             String resolved = (snap.videoStreamUrl != null && !snap.videoStreamUrl.isEmpty())
                     ? snap.videoStreamUrl
                     : DEFAULT_VIDEO_URL;
-            updateVideoUrl(resolved);
+            fpvVideoController.updateUrl(resolved);
             applyStoredArmLengthScalesToWebView();
             // Re-load IMU config from SharedPreferences whenever settings are saved
             initImuAngleConfig();
@@ -1555,9 +1265,7 @@ public class MainActivity extends ScaledAppCompatActivity {
         ExcavatorWebAppBridge.setMessageListener(null);
         
         // 停止视频播放
-        if (fpvWidget != null) {
-            fpvWidget.stop();
-        }
+        if (fpvVideoController != null) fpvVideoController.destroy();
         
         // 停止主数据更新
         if (handler != null && updateRunnable != null) {
@@ -1584,6 +1292,7 @@ public class MainActivity extends ScaledAppCompatActivity {
         }
         TcuLinkHub.setSender(null);
         TcuInitHandshake.reset();
+        TcuGuidanceState.getInstance().clear();
         
         // 断开遥控器连接
         RCSDKManager.INSTANCE.disconnectRC();
