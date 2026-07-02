@@ -93,9 +93,9 @@ public final class DitchTaskState {
         targetLonA = safe(lon);
         targetLatA = safe(lat);
         fillCutCoordA = safe(fillCoord);
-        targetHeightAM = parseMeters(targetHeightA);
-        fillCutAM = parseMeters(fillCutA);
-        fillCutCoordAM = parseMeters(fillCutCoordA);
+        targetHeightAM = parseMetersValue(targetHeightA);
+        fillCutAM = parseMetersValue(fillCutA);
+        fillCutCoordAM = parseMetersValue(fillCutCoordA);
         recomputeGuidanceDesignZLocal();
     }
 
@@ -112,9 +112,9 @@ public final class DitchTaskState {
         targetLonB = safe(lon);
         targetLatB = safe(lat);
         fillCutCoordB = safe(fillCoord);
-        targetHeightBM = parseMeters(targetHeightB);
-        fillCutBM = parseMeters(fillCutB);
-        fillCutCoordBM = parseMeters(fillCutCoordB);
+        targetHeightBM = parseMetersValue(targetHeightB);
+        fillCutBM = parseMetersValue(fillCutB);
+        fillCutCoordBM = parseMetersValue(fillCutCoordB);
         recomputeGuidanceDesignZLocal();
     }
 
@@ -626,5 +626,10 @@ public final class DitchTaskState {
         } catch (NumberFormatException e) {
             return Double.NaN;
         }
+    }
+
+    private static double parseMetersValue(String value) {
+        Double parsed = parseMeters(value);
+        return parsed == null ? Double.NaN : parsed;
     }
 }

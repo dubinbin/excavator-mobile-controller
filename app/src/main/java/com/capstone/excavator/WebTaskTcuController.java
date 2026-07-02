@@ -367,10 +367,10 @@ final class WebTaskTcuController {
             return;
         }
         try {
+
             JSONObject result = requiredObject(payload, "digTaskResult");
-            WebPoint a = parsePoint(result, "PointAInfo", "pointA_Mode");
-            WebPoint b = parsePoint(result, "PointBInfo", "pointB_Mode");
-            JSONObject section = requiredObject(result, "sectionParameter");
+            WebPoint a = parsePoint(requiredObject(result, "PointAInfo"));
+            WebPoint b = parsePoint(requiredObject(result, "PointBInfo"));
             int refA = parseBucketMode(result.optString("selectedAPointBucketTeeth", "MIDDLE"));
             int refB = parseBucketMode(result.optString("selectedBPointBucketTeeth", "MIDDLE"));
             int ditchType = "trapezoid".equalsIgnoreCase(
@@ -388,10 +388,10 @@ final class WebTaskTcuController {
             DitchTaskState.updatePointB(
                     refB, "", "", numberText(b.lon), numberText(b.lat), numberText(b.heightM));
             DitchTaskState.updateSideParams(
-                    valueText(section, "L_Width"),
-                    valueText(section, "W_Width"),
-                    valueText(section, "H_Height"),
-                    valueText(section, "R_Width"));
+                    valueText(result, "L_Width"),
+                    valueText(result, "W_Width"),
+                    valueText(result, "H_Height"),
+                    valueText(result, "R_Width"));
 
             DitchTcuWorkflow workflow = DitchTcuWorkflow.getInstance();
             workflow.submitDitchParams(new DitchTcuWorkflow.StepCallback() {
@@ -436,9 +436,9 @@ final class WebTaskTcuController {
         }
         try {
             JSONObject result = requiredObject(payload, "repairSlopeResult");
-            WebPoint a = parsePoint(result, "PointAInfo", "pointA_Mode");
-            WebPoint b = parsePoint(result, "PointBInfo", "pointB_Mode");
-            WebPoint c = parsePoint(result, "PointCInfo", "pointC_Mode");
+            WebPoint a = parsePoint(requiredObject(result, "PointAInfo"));
+            WebPoint b = parsePoint(requiredObject(result, "PointBInfo"));
+            WebPoint c = parsePoint(requiredObject(result, "PointCInfo"));
             JSONObject section = requiredObject(result, "sectionParameter");
             int refA = parseBucketMode(result.optString("selectedAPointBucketTeeth", "MIDDLE"));
             int refB = parseBucketMode(result.optString("selectedBPointBucketTeeth", "MIDDLE"));
@@ -649,20 +649,13 @@ final class WebTaskTcuController {
         return value;
     }
 
-    private static WebPoint parsePoint(JSONObject result, String infoKey, String modeKey)
-            throws JSONException {
-        JSONObject allModes = requiredObject(result, infoKey);
-        String mode = result.optString(modeKey, "AUTO");
-        JSONObject point = allModes.optJSONObject(mode);
-        if (point == null) {
-            throw new JSONException(infoKey + "." + mode + " 缺失");
-        }
+    /** 挖沟当前 payload：PointAInfo / PointBInfo 本身就是点对象。 */
+    private static WebPoint parsePoint(JSONObject point) throws JSONException {
         return new WebPoint(
                 requiredDouble(point, "latitude"),
                 requiredDouble(point, "longitude"),
                 requiredDouble(point, "height"));
     }
-
     private static double requiredDouble(JSONObject object, String key) throws JSONException {
         Object raw = object.opt(key);
         if (raw == null || raw == JSONObject.NULL) {

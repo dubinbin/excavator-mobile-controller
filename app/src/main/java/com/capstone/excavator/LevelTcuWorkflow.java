@@ -102,8 +102,7 @@ public final class LevelTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
             return;
         }
         int mode = normalizePointMode(pointMode);
-        pendingSurveyCallback = callback;
-        sendAndWait(TcuBusinessCodec.MSG_SURVEY_RESULT,
+        sendAndWaitSurvey(TcuBusinessCodec.MSG_SURVEY_RESULT,
                 TcuBusinessCodec.buildSurveyRequest(
                         TcuBusinessCodec.FEATURE_LEVEL,
                         TcuBusinessCodec.POINT_REF,
@@ -292,13 +291,17 @@ public final class LevelTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
             return true;
         }
         int heightTenthCm = TcuBusinessCodec.readInt32Be(data, 4);
-        double lat = TcuBusinessCodec.parseInt40LatLon(data, 8);
+        double lat =  TcuBusinessCodec.parseInt40LatLon(data, 8);
         double lon = TcuBusinessCodec.parseInt40LatLon(data, 13);
+
+        double truncatedLat = (long)(lat * 10000) / 10000.0;
+        double truncatedLon = (long)(lon * 10000) / 10000.0;
+
         double heightM = TcuBusinessCodec.tenthCmToMeters(heightTenthCm);
-        LevelTaskState.updateSurveyResult(heightTenthCm, lat, lon);
+        LevelTaskState.updateSurveyResult(heightTenthCm, truncatedLat, truncatedLon);
         phase = Phase.SURVEY_DONE;
-        notifySurveyStored(heightM, lat, lon);
-        succeedPendingSurvey(heightM, lat, lon);
+        notifySurveyStored(heightM, truncatedLat, truncatedLon);
+        succeedPendingSurvey(heightM, truncatedLat, truncatedLon);
         return true;
     }
 
@@ -365,6 +368,30 @@ public final class LevelTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
         mainHandler.postDelayed(pendingTimeout, REQUEST_TIMEOUT_MS);
     }
 
+    /**
+     * 测点请求必须在发送前保存 {@link SurveyCallback}。
+     * 普通 {@link #sendAndWait} 会先清理 pending，不能在调用它之前设置测点回调。
+     */
+    private void sendAndWaitSurvey(
+            int expectAckMsgId, byte[] frame, SurveyCallback callback) {
+        clearPending();
+        pendingExpectAck = expectAckMsgId;
+        pendingCallback = callback;
+        pendingSurveyCallback = callback;
+        if (!TcuLinkHub.send(frame)) {
+            clearPending();
+            fail(callback, "发送失败，请检查接收机连接");
+            return;
+        }
+        pendingTimeout = () -> {
+            if (isPending(expectAckMsgId)) {
+                clearPending();
+                fail(callback, "等待 TCU 应答超时");
+            }
+        };
+        mainHandler.postDelayed(pendingTimeout, REQUEST_TIMEOUT_MS);
+    }
+
     private boolean isPending(int ackMsgId) {
         return pendingExpectAck == ackMsgId;
     }
@@ -411,6 +438,8 @@ public final class LevelTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
         pendingSurveyCallback = null;
         mainHandler.post(() -> {
             if (cb != null) {
+                Log.d(TAG, "survey callback: heightM=" + heightM
+                        + ", lat=" + lat + ", lon=" + lon);
                 cb.onSurveyResult(heightM, lat, lon);
                 cb.onSuccess();
             }
