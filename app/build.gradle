@@ -22,8 +22,7 @@ android {
         versionName '1.0'
 // https://appassets.androidplatform.net/assets/web/
         // 热更新检查（可按环境改 debug/release 或拆 flavor）
-        buildConfigField 'String', 'UPDATE_API_BASE', '"https://appassets.androidplatform.net/assets/web/excavator-web-app"'
-        // buildConfigField 'String', 'UPDATE_API_BASE', '"http://192.168.20.145:3000"'
+        buildConfigField 'String', 'UPDATE_API_BASE', '"http://192.168.20.145:3000"'
         buildConfigField 'String', 'UPDATE_API_KEY', '"capstone_app_updater_key"'
         buildConfigField 'String', 'UPDATE_CHANNEL', '"prod"'
 

@@ -15,6 +15,8 @@ public final class DitchTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
 
     private static final String TAG = "DitchTcuWorkflow";
     private static final long REQUEST_TIMEOUT_MS = 8000L;
+    public static final int DITCH_SQUARE = 0;
+    public static final int DITCH_TRAPEZOID = 1;
 
     public enum Phase {
         IDLE,
@@ -35,18 +37,49 @@ public final class DitchTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
         void onSurveyResult(double heightM, double lat, double lon);
     }
 
-    public interface SurveyStoredListener {
-        void onSurveyStored(int pointId, double heightM, double lat, double lon);
+    /** Web 已校验的挖沟设计参数；帧编码由 workflow 负责。 */
+    public static final class Params {
+        final int ditchType;
+        final double aLat;
+        final double aLon;
+        final double aHeightM;
+        final double bLat;
+        final double bLon;
+        final double bHeightM;
+        final double depthM;
+        final double leftWidthM;
+        final double rightWidthM;
+        final double topWidthM;
+
+        public Params(int ditchType, double aLat, double aLon, double aHeightM,
+                      double bLat, double bLon, double bHeightM, double depthM,
+                      double leftWidthM, double rightWidthM, double topWidthM) {
+            if (ditchType != DITCH_SQUARE && ditchType != DITCH_TRAPEZOID
+                    || !areFinite(aLat, aLon, aHeightM, bLat, bLon, bHeightM,
+                    depthM, leftWidthM, rightWidthM, topWidthM)) {
+                throw new IllegalArgumentException("挖沟参数无效");
+            }
+            this.ditchType = ditchType;
+            this.aLat = aLat;
+            this.aLon = aLon;
+            this.aHeightM = aHeightM;
+            this.bLat = bLat;
+            this.bLon = bLon;
+            this.bHeightM = bHeightM;
+            this.depthM = depthM;
+            this.leftWidthM = leftWidthM;
+            this.rightWidthM = rightWidthM;
+            this.topWidthM = topWidthM;
+        }
     }
 
     private static final DitchTcuWorkflow INSTANCE = new DitchTcuWorkflow();
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
-    @Nullable
-    private static volatile SurveyStoredListener surveyStoredListener;
-
     private volatile Phase phase = Phase.IDLE;
+    private boolean surveyACompleted;
+    private boolean surveyBCompleted;
     private int pendingExpectAck = -1;
     private int pendingSurveyPointId = -1;
     @Nullable
@@ -62,10 +95,6 @@ public final class DitchTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
 
     public static DitchTcuWorkflow getInstance() {
         return INSTANCE;
-    }
-
-    public static void setSurveyStoredListener(@Nullable SurveyStoredListener listener) {
-        surveyStoredListener = listener;
     }
 
     public Phase getPhase() {
@@ -115,32 +144,27 @@ public final class DitchTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
                 callback);
     }
 
-    /** 挖沟参数整包下发（0x20），依据 {@link DitchTaskState} 中 A'/B' 与侧向参数。 */
-    public void submitDitchParams(StepCallback callback) {
+    /** 下发挖沟参数（0x20）。 */
+    public void submitDitchParams(Params params, StepCallback callback) {
         if (!ensureLink(callback)) {
             return;
         }
-        if (!DitchTaskState.canSubmitDitchParams()) {
-            fail(callback, "请完成 A/B 点设置与沟深宽度参数");
+        if (!surveyACompleted || !surveyBCompleted) {
+            fail(callback, "请先完成 A/B 测点");
             return;
         }
-        DitchTaskState.PrimePoint a = DitchTaskState.computePrimeA();
-        DitchTaskState.PrimePoint b = DitchTaskState.computePrimeB();
-        if (a == null || b == null) {
-            fail(callback, "无法计算 A'/B' 建模点");
+        if (params == null) {
+            fail(callback, "挖沟参数无效");
             return;
         }
-        int depth = TcuBusinessCodec.metersToTenthCm(parseMetersOrFail(DitchTaskState.getSideParam3()));
-        int left = TcuBusinessCodec.metersToTenthCm(parseMetersOrFail(DitchTaskState.getSideParam1()));
-        int right = TcuBusinessCodec.metersToTenthCm(parseMetersOrFail(DitchTaskState.getSideParam4()));
-        int top = DitchTaskState.isSquareDitch()
-                ? 0
-                : TcuBusinessCodec.metersToTenthCm(parseMetersOrFail(DitchTaskState.getSideParam2()));
         byte[] frame = TcuBusinessCodec.buildDitchParams(
-                DitchTaskState.getDitchType(),
-                a.lat, a.lon, TcuBusinessCodec.metersToTenthCm(a.heightM),
-                b.lat, b.lon, TcuBusinessCodec.metersToTenthCm(b.heightM),
-                depth, left, right, top);
+                params.ditchType,
+                params.aLat, params.aLon, TcuBusinessCodec.metersToTenthCm(params.aHeightM),
+                params.bLat, params.bLon, TcuBusinessCodec.metersToTenthCm(params.bHeightM),
+                TcuBusinessCodec.metersToTenthCm(params.depthM),
+                TcuBusinessCodec.metersToTenthCm(params.leftWidthM),
+                TcuBusinessCodec.metersToTenthCm(params.rightWidthM),
+                TcuBusinessCodec.metersToTenthCm(params.topWidthM));
         sendAndWait(TcuBusinessCodec.MSG_DITCH_PARAMS_ACK, frame, callback);
     }
 
@@ -189,7 +213,8 @@ public final class DitchTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
     public void resetLocal() {
         clearPending();
         phase = Phase.IDLE;
-        DitchTaskState.clearTcuSession();
+        surveyACompleted = false;
+        surveyBCompleted = false;
     }
 
     public void cancelPending() {
@@ -267,27 +292,18 @@ public final class DitchTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
         double heightM = TcuBusinessCodec.tenthCmToMeters(heightTenthCm);
         int pointId = expectedPoint;
         if (pointId == TcuBusinessCodec.POINT_A) {
-            DitchTaskState.updateSurveyA(heightTenthCm, lat, lon);
+            surveyACompleted = true;
             phase = Phase.SURVEY_A_DONE;
         } else if (pointId == TcuBusinessCodec.POINT_B) {
-            DitchTaskState.updateSurveyB(heightTenthCm, lat, lon);
+            surveyBCompleted = true;
             phase = Phase.SURVEY_B_DONE;
         } else {
             failPendingSurvey("测点应答 PointID 异常: 0x" + Integer.toHexString(pointId));
             return true;
         }
         pendingSurveyPointId = -1;
-        notifySurveyStored(pointId, heightM, lat, lon);
         succeedPendingSurvey(heightM, lat, lon);
         return true;
-    }
-
-    private void notifySurveyStored(int pointId, double heightM, double lat, double lon) {
-        SurveyStoredListener listener = surveyStoredListener;
-        if (listener == null) {
-            return;
-        }
-        mainHandler.post(() -> listener.onSurveyStored(pointId, heightM, lat, lon));
     }
 
     private boolean handleDitchParamsAck(byte[] data) {
@@ -300,7 +316,6 @@ public final class DitchTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
             failPending(TcuBusinessCodec.resultMessage(result));
             return true;
         }
-        DitchTaskState.setTcuParamsAccepted(true);
         phase = Phase.PARAMS_ACCEPTED;
         succeedPending();
         return true;
@@ -320,7 +335,6 @@ public final class DitchTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
             failPending("任务未激活: " + TcuBusinessCodec.resultMessage(result));
             return true;
         }
-        DitchTaskState.setTcuTaskActive(true);
         phase = Phase.TASK_ACTIVE;
         succeedPending();
         return true;
@@ -377,6 +391,7 @@ public final class DitchTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
         clearPendingTimeout();
         pendingCallback = null;
         pendingSurveyCallback = null;
+        pendingSurveyPointId = -1;
     }
 
     private void clearPendingTimeout() {
@@ -396,15 +411,16 @@ public final class DitchTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
     }
 
     private static int normalizePointMode(int pointMode) {
-        if (pointMode < DitchTaskState.REF_LEFT || pointMode > DitchTaskState.REF_RIGHT) {
-            return DitchTaskState.REF_MIDDLE;
-        }
-        return pointMode;
+        return pointMode < 0 || pointMode > 2 ? 1 : pointMode;
     }
 
-    private static double parseMetersOrFail(String text) {
-        Double v = DitchTaskState.parseMeters(text);
-        return v == null || Double.isNaN(v) ? 0.0 : v;
+    private static boolean areFinite(double... values) {
+        for (double value : values) {
+            if (!Double.isFinite(value)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private void succeedPending() {

@@ -61,8 +61,8 @@ public class MainActivity extends ScaledAppCompatActivity {
     private View rightActivityPanel;
     private View verticalActivityPanelLeft;
     private View verticalActivityPanelRight;
-    private TextView joystickRawDebugText;
-    private final LevelTaskGuidanceController levelTaskGuidance = new LevelTaskGuidanceController();
+    private final LevelTaskGuidanceController levelTaskGuidance =
+            new LevelTaskGuidanceController();
     private MotionModeSegmentView motionModeSegment;
     private volatile int desiredMotionModeChannelIndex = MotionModeSegmentView.INDEX_STOP;
     private volatile ControllerLocalSettings.Snapshot currentJoystickUiMappingSnapshot;
@@ -73,12 +73,12 @@ public class MainActivity extends ScaledAppCompatActivity {
     private ExcavatorWebAppPreloader webAppPreloader;
 
     private final TaskTypeState.OnTypeChangeListener taskTypeListener =
-            (newType, oldType) -> runOnUiThread(this::applyTaskOverlayVisibility);
+            (newType, oldType) -> runOnUiThread(() -> {
+                levelTaskGuidance.clear();
+                applyTaskOverlayVisibility();
+            });
     private final WorkRunState.OnStateChangeListener workStateListener =
             (newState, oldState) -> runOnUiThread(this::applyTaskOverlayVisibility);
-    private final TcuGuidanceState.OnUpdateListener tcuGuidanceListener =
-            snapshot -> runOnUiThread(() -> onTcuGuidanceSnapshot(snapshot));
-
     // 数据更新Handler
     private Handler handler;
     private Runnable updateRunnable;
@@ -99,7 +99,7 @@ public class MainActivity extends ScaledAppCompatActivity {
     private float realBucketAngle = 0f;
     private float realCabinPitchAngle = 0f;
     private float realCabinRollAngle = 0f;
-    // RTK?????????
+
     private double realRtkLat = 0.0;
     private double realRtkLon = 0.0;
 
@@ -158,9 +158,6 @@ public class MainActivity extends ScaledAppCompatActivity {
         super.onStart();
         TaskTypeState.getInstance().addListener(taskTypeListener);
         WorkRunState.getInstance().addListener(workStateListener);
-        TcuGuidanceState.getInstance().addListener(tcuGuidanceListener);
-        levelTaskGuidance.onTcuGuidanceUpdate(
-                TcuGuidanceState.getInstance().getLatest(), useRealData);
         applyTaskOverlayVisibility();
     }
 
@@ -168,7 +165,6 @@ public class MainActivity extends ScaledAppCompatActivity {
     protected void onStop() {
         TaskTypeState.getInstance().removeListener(taskTypeListener);
         WorkRunState.getInstance().removeListener(workStateListener);
-        TcuGuidanceState.getInstance().removeListener(tcuGuidanceListener);
         super.onStop();
     }
 
@@ -325,7 +321,7 @@ public class MainActivity extends ScaledAppCompatActivity {
         rightActivityPanel = findViewById(R.id.rightActivityPanel);
         verticalActivityPanelLeft = findViewById(R.id.verticalActivityPanelLeft);
         verticalActivityPanelRight = findViewById(R.id.verticalActivityPanelRight);
-        joystickRawDebugText = findViewById(R.id.joystickRawDebugText);
+
         motionModeSegment = findViewById(R.id.motionModeSegment);
         headerBar = findViewById(R.id.headerBar);
         emergencyStopOverlay = findViewById(R.id.emergencyStopOverlay);
@@ -335,8 +331,6 @@ public class MainActivity extends ScaledAppCompatActivity {
     }
 
     private void configurePostureAndMapPanel() {
-        updateJoystickRawDebugText();
-        levelTaskGuidance.setImuAngleConfig(imuAngleConfig);
         levelTaskGuidance.bind(this);
         if (motionModeSegment != null) {
             motionModeSegment.setOnIndexChangeListener(this::onMotionModeChanged);
@@ -423,32 +417,33 @@ public class MainActivity extends ScaledAppCompatActivity {
      * 主页「结束任务」：退出 TCU 功能并清空本地任务态/引导快照，防止下次作业沿用上次数据。
      */
     private void clearTaskSessionOnEnd(TaskTypeState.Type endingType) {
-        LevelTcuWorkflow levelWorkflow = LevelTcuWorkflow.getInstance();
-        DitchTcuWorkflow ditchWorkflow = DitchTcuWorkflow.getInstance();
-        SlopeRepairTcuWorkflow slopeWorkflow = SlopeRepairTcuWorkflow.getInstance();
-        levelWorkflow.cancelPending();
-        ditchWorkflow.cancelPending();
-        slopeWorkflow.cancelPending();
+        // LevelTcuWorkflow levelWorkflow = LevelTcuWorkflow.getInstance();
+        // DitchTcuWorkflow ditchWorkflow = DitchTcuWorkflow.getInstance();
+        // SlopeRepairTcuWorkflow slopeWorkflow = SlopeRepairTcuWorkflow.getInstance();
+        // levelWorkflow.cancelPending();
+        // ditchWorkflow.cancelPending();
+        // slopeWorkflow.cancelPending();
 
-        if (endingType == TaskTypeState.Type.LEVEL && levelWorkflow.isFeatureActive()) {
-            levelWorkflow.exitFeature(null);
-        } else {
-            levelWorkflow.resetLocal();
+        // if (endingType == TaskTypeState.Type.LEVEL && levelWorkflow.isFeatureActive()) {
+        //     levelWorkflow.exitFeature(null);
+        // } else {
+        //     levelWorkflow.resetLocal();
+        // }
+        // if (endingType == TaskTypeState.Type.DITCH && ditchWorkflow.isFeatureActive()) {
+        //     ditchWorkflow.exitFeature(null);
+        // } else {
+        //     ditchWorkflow.resetLocal();
+        // }
+        // if (endingType == TaskTypeState.Type.SLOPE && slopeWorkflow.isFeatureActive()) {
+        //     slopeWorkflow.exitFeature(null);
+        // } else {
+        //     slopeWorkflow.resetLocal();
+        // }
+        // DitchTaskState.reset();
+        // SlopeRepairTaskState.reset();
+        if (endingType == TaskTypeState.Type.LEVEL) {
+            LevelTaskState.resetAll();
         }
-        if (endingType == TaskTypeState.Type.DITCH && ditchWorkflow.isFeatureActive()) {
-            ditchWorkflow.exitFeature(null);
-        } else {
-            ditchWorkflow.resetLocal();
-        }
-        if (endingType == TaskTypeState.Type.SLOPE && slopeWorkflow.isFeatureActive()) {
-            slopeWorkflow.exitFeature(null);
-        } else {
-            slopeWorkflow.resetLocal();
-        }
-
-        LevelTaskState.resetAll();
-        DitchTaskState.reset();
-        SlopeRepairTaskState.reset();
     }
 
     private void applyTaskOverlayVisibility() {
@@ -479,7 +474,43 @@ public class MainActivity extends ScaledAppCompatActivity {
                 && (taskType == TaskTypeState.Type.LEVEL
                 || taskType == TaskTypeState.Type.DITCH
                 || taskType == TaskTypeState.Type.SLOPE);
-        levelTaskGuidance.onGuidanceRunningChanged(guidanceRunning, taskType, useRealData);
+        if (!guidanceRunning) {
+            levelTaskGuidance.clear();
+        } else {
+            updateMockLevelGuidanceIfNeeded();
+        }
+    }
+
+    /** 找平偏离公式完成前，每次只 mock 左右 VerticalSpectrumGaugeView。 */
+    private void updateMockLevelGuidanceIfNeeded() {
+        boolean levelRunning = TaskTypeState.getInstance().getType()
+                == TaskTypeState.Type.LEVEL
+                && WorkRunState.getInstance().getState() == WorkRunState.State.RUNNING;
+        if (levelRunning && LevelTaskState.hasTaskParameters()) {
+            levelTaskGuidance.updateMockActivityGaugeDeviations();
+        }
+    }
+
+    /**
+     * 外部计算模块调用：只更新找平 / 挖沟左右光谱竖条。
+     * 正值表示偏高，负值表示偏低，单位为厘米。
+     */
+    public void updateActivityGaugeDeviations(
+            float leftDeviationCm,
+            float rightDeviationCm) {
+        runOnUiThread(() -> levelTaskGuidance.updateActivityGaugeDeviations(
+                leftDeviationCm, rightDeviationCm));
+    }
+
+    /**
+     * 外部计算模块调用：只更新左右数值及方向卡。
+     * 正值高亮向下，负值高亮向上，单位为厘米。
+     */
+    public void updateSpeedIndicatorDeviations(
+            float leftDeviationCm,
+            float rightDeviationCm) {
+        runOnUiThread(() -> levelTaskGuidance.updateSpeedIndicatorDeviations(
+                leftDeviationCm, rightDeviationCm));
     }
 
     private static void setVisible(View view, boolean visible) {
@@ -616,7 +647,6 @@ public class MainActivity extends ScaledAppCompatActivity {
         if (postureCardView != null) {
             postureCardView.setBucketAngleOffsetDeg((float) dim.bucketAngleOffsetDeg);
         }
-        levelTaskGuidance.setImuAngleConfig(imuAngleConfig);
     }
 
     /** 从 SharedPreferences 恢复臂长比例，WebView onPageFinished 后会随 payload 下发。 */
@@ -700,6 +730,9 @@ public class MainActivity extends ScaledAppCompatActivity {
         
         // 更新定位信息（带小幅随机波动）
         updatePositioning();
+
+        // 找平真实偏离公式尚未确定，暂时每秒刷新一次左右竖条模拟值。
+        updateMockLevelGuidanceIfNeeded();
         
         // 更新挖掘深度（带小幅随机波动）
 //        updateDigDepth();
@@ -709,10 +742,6 @@ public class MainActivity extends ScaledAppCompatActivity {
         if (!useRealData) {
             notifyLinkLatencyMs(-1);
         }
-    }
-
-    private void onTcuGuidanceSnapshot(TcuGuidanceState.Snapshot snapshot) {
-        levelTaskGuidance.onTcuGuidanceUpdate(snapshot, useRealData);
     }
 
     /** UDP 心跳测得的链路 RTT（毫秒），同步到底栏占位接口与顶栏显示。 */
@@ -756,10 +785,8 @@ public class MainActivity extends ScaledAppCompatActivity {
         }
         // 推送到 BottomBarView 组件
         if (useRealData) {
-            levelTaskGuidance.setImuAngles(rawBoom, rawStick, rawBucket);
             ImuRealtimeState.update(rawBoom, rawStick, rawBucket, rawCabinPitch, rawCabinRoll);
         }
-        levelTaskGuidance.onImuUpdate(useRealData);
     }
     
     private void updatePositioning() {
@@ -811,19 +838,9 @@ public class MainActivity extends ScaledAppCompatActivity {
                 bottomBar.setJoystickLeft(leftX, leftY);
                 bottomBar.setJoystickRight(rightX, rightY);
             }
-            updateJoystickRawDebugText();
             updateMotionModeFromChannel(ch5Value);
         }
     };
-
-    private void updateJoystickRawDebugText() {
-        if (joystickRawDebugText == null) {
-            return;
-        }
-        joystickRawDebugText.setText(String.format(Locale.US,
-                "CH1:%5d  CH2:%5d\nCH3:%5d  CH4:%5d",
-                ch1Value, ch2Value, ch3Value, ch4Value));
-    }
 
     private final CompletionCallbackWith<int[]> joystickValueCallback = new CompletionCallbackWith<int[]>() {
         @Override
@@ -874,6 +891,7 @@ public class MainActivity extends ScaledAppCompatActivity {
 
     private void onMotionModeChanged(int selectedIndex) {
         desiredMotionModeChannelIndex = selectedIndex;
+        GlobalStatus.getInstance().setMotionMode(selectedIndex);
         applyMotionModeChannelMapping(selectedIndex);
     }
 
@@ -1106,6 +1124,14 @@ public class MainActivity extends ScaledAppCompatActivity {
                                 realBucketAngle = parsed.bucketAngle;
                                 realCabinPitchAngle = parsed.cabinPitchAngle;
                                 realCabinRollAngle = parsed.cabinRollAngle;
+
+                                GlobalStatus.getInstance().updateImuAngles(
+                                        parsed.boomAngle,
+                                        parsed.stickAngle,
+                                        parsed.bucketAngle,
+                                        parsed.cabinPitchAngle,
+                                        parsed.cabinRollAngle);
+
                                 ImuRealtimeState.update(
                                         parsed.boomAngle,
                                         parsed.stickAngle,
@@ -1129,11 +1155,6 @@ public class MainActivity extends ScaledAppCompatActivity {
                                     }
                                     startUDPTimeoutCheck();
 
-                                    levelTaskGuidance.setImuAngles(
-                                            parsed.boomAngle,
-                                            parsed.stickAngle,
-                                            parsed.bucketAngle);
-                                    levelTaskGuidance.onImuUpdate(useRealData);
                                 });
                             }
                             @Override

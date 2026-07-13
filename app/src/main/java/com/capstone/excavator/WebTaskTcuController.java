@@ -38,16 +38,18 @@ final class WebTaskTcuController {
     }
 
     private static final String TAG = "WebTaskTcuController";
-
+    // 测点，webview模块向tcu发请求
     static final String WEB_EVENT_READY = "WEBVIEW_READY";
     static final String WEB_EVENT_MEASUREMENT = "MEASUREMENT_POINT_CALL";
     static final String WEB_EVENT_LEVEL_START = "LEVEL_TASK_START";
     static final String WEB_EVENT_DITCH_START = "DIG_TASK_START";
     static final String WEB_EVENT_SLOPE_START = "REPAIR_SLOPE_START";
+    static final String WEB_EVENT_GET_LEVEL_CALC_DIG_AMOUNT_SIGNAL = "GET_LEVEL_CALC_DIG_AMOUNT_SIGNAL";
 
     private static final String NATIVE_EVENT_MEASUREMENT = "MEASUREMENT_POINT_RECEIVE";
     private static final String NATIVE_EVENT_WORKFLOW_STATE = "TCU_WORKFLOW_STATE";
     private static final String NATIVE_EVENT_WORKFLOW_ERROR = "TCU_WORKFLOW_ERROR";
+    private static final String NATIVE_RECEIVE_LEVEL_CALC_DIG_AMOUNT = "RECEIVE_LEVEL_CALC_DIG_AMOUNT";
 
     private final Host host;
     private final TaskKind taskKind;
@@ -70,6 +72,7 @@ final class WebTaskTcuController {
             return;
         }
         featureEnterRequested = true;
+        // 每次任务页就绪都向 TCU 发送 0x04，并以其返回的 0x84 ActiveFeature 为准。
         enterFeature();
     }
 
@@ -80,6 +83,9 @@ final class WebTaskTcuController {
         switch (type) {
             case WEB_EVENT_MEASUREMENT:
                 requestMeasurement(payload);
+                return true;
+            case WEB_EVENT_GET_LEVEL_CALC_DIG_AMOUNT_SIGNAL:
+                calcRealTimeDigAmount(payload);
                 return true;
             case WEB_EVENT_LEVEL_START:
                 if (taskKind != TaskKind.LEVEL) {
@@ -118,8 +124,6 @@ final class WebTaskTcuController {
                 level.cancelPending();
                 if (level.isFeatureActive()) {
                     level.exitFeature(null);
-                } else {
-                    level.resetLocal();
                 }
                 break;
             case DITCH:
@@ -127,8 +131,6 @@ final class WebTaskTcuController {
                 ditch.cancelPending();
                 if (ditch.isFeatureActive()) {
                     ditch.exitFeature(null);
-                } else {
-                    ditch.resetLocal();
                 }
                 break;
             case SLOPE:
@@ -136,8 +138,6 @@ final class WebTaskTcuController {
                 slope.cancelPending();
                 if (slope.isFeatureActive()) {
                     slope.exitFeature(null);
-                } else {
-                    slope.resetLocal();
                 }
                 break;
         }
@@ -147,14 +147,10 @@ final class WebTaskTcuController {
         switch (taskKind) {
             case LEVEL:
                 LevelTcuWorkflow level = LevelTcuWorkflow.getInstance();
-                if (level.isFeatureActive()) {
-                    sendState(TcuBusinessCodec.MSG_FEATURE_SELECT_ACK, level.getPhase().name());
-                    return;
-                }
                 level.enterFeature(new LevelTcuWorkflow.StepCallback() {
                     @Override
                     public void onSuccess() {
-                        sendState(TcuBusinessCodec.MSG_FEATURE_SELECT_ACK, level.getPhase().name());
+                        sendStateToWebView(TcuBusinessCodec.MSG_FEATURE_SELECT_ACK, level.getPhase().name());
                     }
 
                     @Override
@@ -166,14 +162,10 @@ final class WebTaskTcuController {
                 break;
             case DITCH:
                 DitchTcuWorkflow ditch = DitchTcuWorkflow.getInstance();
-                if (ditch.isFeatureActive()) {
-                    sendState(TcuBusinessCodec.MSG_FEATURE_SELECT_ACK, ditch.getPhase().name());
-                    return;
-                }
                 ditch.enterFeature(new DitchTcuWorkflow.StepCallback() {
                     @Override
                     public void onSuccess() {
-                        sendState(TcuBusinessCodec.MSG_FEATURE_SELECT_ACK, ditch.getPhase().name());
+                        sendStateToWebView(TcuBusinessCodec.MSG_FEATURE_SELECT_ACK, ditch.getPhase().name());
                     }
 
                     @Override
@@ -185,14 +177,10 @@ final class WebTaskTcuController {
                 break;
             case SLOPE:
                 SlopeRepairTcuWorkflow slope = SlopeRepairTcuWorkflow.getInstance();
-                if (slope.isFeatureActive()) {
-                    sendState(TcuBusinessCodec.MSG_FEATURE_SELECT_ACK, slope.getPhase().name());
-                    return;
-                }
                 slope.enterFeature(new SlopeRepairTcuWorkflow.StepCallback() {
                     @Override
                     public void onSuccess() {
-                        sendState(TcuBusinessCodec.MSG_FEATURE_SELECT_ACK, slope.getPhase().name());
+                        sendStateToWebView(TcuBusinessCodec.MSG_FEATURE_SELECT_ACK, slope.getPhase().name());
                     }
 
                     @Override
@@ -202,6 +190,39 @@ final class WebTaskTcuController {
                     }
                 });
                 break;
+        }
+    }
+
+    private void calcRealTimeDigAmount(@Nullable JSONObject payload) {
+        if (payload == null) {
+            reportError(WEB_EVENT_MEASUREMENT, "填挖量参数缺失");
+            return;
+        }
+        int pointMode = payload.optInt("mode", 1); // 当前所选模式，0是高度定点模式，1是坐标定点模式
+        String targetHeight = payload.optString("targetHeight"); // 目标高度
+        String digMagnitude = payload.optString("digMagnitude"); // 填挖量
+        String targetLongitude = payload.optString("targetLongitude"); // 目标经度
+        String targetLatitude = payload.optString("targetLatitude"); // 目标纬度
+
+        GlobalStatus.ImuAngles currentExcavatorInfo =
+                GlobalStatus.getInstance().getRunTimeImuData();
+        // TODO
+        //currentExcavatorInfo.bucketAngle
+
+        double calcHeight = 0.02;
+        this.sendToWebviewAfterCalc(calcHeight);
+    }
+
+    // 把计算后的相对高度发给前端
+    private void sendToWebviewAfterCalc(double height) {
+        try {
+            JSONObject payload = new JSONObject()
+                    .put("MsgID", TcuBusinessCodec.MSG_SURVEY_RESULT)
+                    .put("FeatureID", taskKind.featureId)
+                    .put("height", height);
+            sendEvent(NATIVE_RECEIVE_LEVEL_CALC_DIG_AMOUNT, payload);
+        } catch (JSONException e) {
+            Log.w(TAG, "build measurement event failed", e);
         }
     }
 
@@ -225,18 +246,17 @@ final class WebTaskTcuController {
                     reportError(WEB_EVENT_MEASUREMENT, "找平 PointID 必须为 0x00");
                     return;
                 }
+                //step1 参考点点击后，webview -> 到这里处理，对应6.2.4. TCU 回传测点结果帧，`MsgID = 0x90`，返回该点高度以及经纬度。
                 LevelTcuWorkflow.getInstance().requestSurvey(pointMode,
                         new LevelTcuWorkflow.SurveyCallback() {
+                            // 返回该点高度以及经纬度。
                             @Override
                             public void onSurveyResult(double heightM, double lat, double lon) {
                                 sendMeasurement(pointId, pointMode, heightM, lat, lon);
                             }
 
                             @Override
-                            public void onSuccess() {
-                                sendState(TcuBusinessCodec.MSG_SURVEY_RESULT,
-                                        LevelTcuWorkflow.getInstance().getPhase().name());
-                            }
+                            public void onSuccess() {}
 
                             @Override
                             public void onError(String message) {
@@ -249,6 +269,7 @@ final class WebTaskTcuController {
                     reportError(WEB_EVENT_MEASUREMENT, "挖沟 PointID 只能为 A(0x01) 或 B(0x02)");
                     return;
                 }
+
                 DitchTcuWorkflow.SurveyCallback ditchCallback =
                         new DitchTcuWorkflow.SurveyCallback() {
                             @Override
@@ -257,10 +278,7 @@ final class WebTaskTcuController {
                             }
 
                             @Override
-                            public void onSuccess() {
-                                sendState(TcuBusinessCodec.MSG_SURVEY_RESULT,
-                                        DitchTcuWorkflow.getInstance().getPhase().name());
-                            }
+                            public void onSuccess() {}
 
                             @Override
                             public void onError(String message) {
@@ -286,10 +304,7 @@ final class WebTaskTcuController {
                             }
 
                             @Override
-                            public void onSuccess() {
-                                sendState(TcuBusinessCodec.MSG_SURVEY_RESULT,
-                                        SlopeRepairTcuWorkflow.getInstance().getPhase().name());
-                            }
+                            public void onSuccess() {}
 
                             @Override
                             public void onError(String message) {
@@ -300,57 +315,12 @@ final class WebTaskTcuController {
         }
     }
 
-    private void startLevel(@Nullable JSONObject payload) {
-        if (!beginStartRequest()) {
-            return;
-        }
-        try {
-            JSONObject result = requiredObject(payload, "levelTaskResult");
-            int ref = parseBucketMode(result.optString("bucketPos", "MIDDLE"));
-            boolean heightMode = !"COORDINATE".equalsIgnoreCase(
-                    result.optString("currentFixationMode", "ALTITUDE"));
-            double targetHeightM;
-            if (heightMode) {
-                targetHeightM = requiredDouble(result, "targetAltitude");
-            } else {
-                targetHeightM = LevelTaskState.getSurveyHeightM()
-                        + requiredDouble(result, "digSize");
-            }
-            LevelTaskState.update(
-                    ref,
-                    heightMode,
-                    numberText(targetHeightM - LevelTaskState.getSurveyHeightM()),
-                    numberText(targetHeightM),
-                    valueText(result, "targetLongitude"),
-                    valueText(result, "targetLatitude"),
-                    numberText(targetHeightM));
-
-            LevelTcuWorkflow workflow = LevelTcuWorkflow.getInstance();
-            workflow.submitLevelParams(targetHeightM, new LevelTcuWorkflow.StepCallback() {
-                @Override
-                public void onSuccess() {
-                    sendState(TcuBusinessCodec.MSG_LEVEL_PARAMS_ACK, workflow.getPhase().name());
-                    confirmLevelTask();
-                }
-
-                @Override
-                public void onError(String message) {
-                    startRequested = false;
-                    reportError(WEB_EVENT_LEVEL_START, message);
-                }
-            });
-        } catch (JSONException | IllegalArgumentException e) {
-            startRequested = false;
-            reportError(WEB_EVENT_LEVEL_START, e.getMessage());
-        }
-    }
-
     private void confirmLevelTask() {
         LevelTcuWorkflow workflow = LevelTcuWorkflow.getInstance();
         workflow.confirmTaskStart(new LevelTcuWorkflow.StepCallback() {
             @Override
             public void onSuccess() {
-                sendState(TcuBusinessCodec.MSG_TASK_CONFIRM_ACK, workflow.getPhase().name());
+                sendStateToWebView(TcuBusinessCodec.MSG_TASK_CONFIRM_ACK, workflow.getPhase().name());
                 activateTask(TaskTypeState.Type.LEVEL);
             }
 
@@ -362,6 +332,76 @@ final class WebTaskTcuController {
         });
     }
 
+
+    private void startLevel(@Nullable JSONObject payload) {
+        if (!beginStartRequest()) {
+            return;
+        }
+
+        try {
+            JSONObject result = requiredObject(payload, "levelTaskResult");
+
+            // {
+            //     "bucketPos": "MIDDLE", // 参考点
+            //     "currentReferencePoint": "0", // 当前参考点 m
+            //     "targetAltitude": "0", // 目标高度 m
+            //     "digSize": "0.8", // 挖掘量 m
+            //     "currentLongitudeAndLatitude": "0,0",// 经纬度
+            //     "targetLongitude": "114.52", // 经度
+            //     "targetLatitude": "22.55", // 纬度
+            //     "currentFixationMode": "COORDINATE" // 定点方式 ALTITUDE 高度， COORDINATE经纬度
+            // }
+            int referencePoint = parseReferencePoint(
+                    result.optString("bucketPos", "MIDDLE"));
+            boolean heightMode = !"COORDINATE".equalsIgnoreCase(
+                    result.optString("currentFixationMode", "ALTITUDE"));
+            double currentReferencePointM = optionalDouble(
+                    result, "currentReferencePoint", Double.NaN);
+            double targetAltitudeM = requiredDouble(result, "targetAltitude");
+            double digSizeM = requiredDouble(result, "digSize");
+            String currentLocation = result.optString(
+                    "currentLongitudeAndLatitude", "");
+            double targetLongitude = optionalDouble(
+                    result, "targetLongitude", Double.NaN);
+            double targetLatitude = optionalDouble(
+                    result, "targetLatitude", Double.NaN);
+
+            // 第一步：原子地保存 Web 解析结果，供后续真实偏离量算法读取。
+            LevelTaskState.update(new LevelTaskState.TaskParameters(
+                    referencePoint,
+                    heightMode,
+                    currentReferencePointM,
+                    targetAltitudeM,
+                    digSizeM,
+                    currentLocation,
+                    targetLongitude,
+                    targetLatitude));
+
+            // 临时 mock 阶段不等待尚未闭环的 TCU 0x11/0x40 流程。
+            // 本地激活后 MainActivity 才会显示左右竖条并开始生成模拟偏离量。
+                       // 目标高程仍按现有 TCU 流程下发；左右机身偏离量暂由首页 mock。
+            LevelTcuWorkflow workflow = LevelTcuWorkflow.getInstance();
+            workflow.submitLevelParams(
+                    new LevelTcuWorkflow.Params(targetAltitudeM),
+                    new LevelTcuWorkflow.StepCallback() {
+                        @Override
+                        public void onSuccess() {
+                            confirmLevelTask();
+                        }
+
+                        @Override
+                        public void onError(String message) {
+                            startRequested = false;
+                            reportError(WEB_EVENT_LEVEL_START, message);
+                        }
+                    });
+
+        } catch (JSONException | IllegalArgumentException e) {
+            startRequested = false;
+            reportError(WEB_EVENT_LEVEL_START, e.getMessage());
+        }
+    }
+
     private void startDitch(@Nullable JSONObject payload) {
         if (!beginStartRequest()) {
             return;
@@ -369,66 +409,61 @@ final class WebTaskTcuController {
         try {
 
             JSONObject result = requiredObject(payload, "digTaskResult");
+
+            // {
+            //     "PointAInfo": {
+            //         "height": "0.8",
+            //         "longitude": "114.58",
+            //         "latitude": "22.85"
+            //     },
+            //     "PointBInfo": {
+            //         "height": "0.9",
+            //         "longitude": "114.85",
+            //         "latitude": "22.85"
+            //     },
+            //     "abPointDistance": 4,
+            //     "L_Width": 0.8,
+            //     "R_Width": 7.5,
+            //     "W_Width": 0.3,
+            //     "H_Height": 0.4
+            // }
             WebPoint a = parsePoint(requiredObject(result, "PointAInfo"));
             WebPoint b = parsePoint(requiredObject(result, "PointBInfo"));
-            int refA = parseBucketMode(result.optString("selectedAPointBucketTeeth", "MIDDLE"));
-            int refB = parseBucketMode(result.optString("selectedBPointBucketTeeth", "MIDDLE"));
             int ditchType = "trapezoid".equalsIgnoreCase(
                     result.optString("digSelectedType", "square"))
-                    ? DitchTaskState.DITCH_TRAPEZOID
-                    : DitchTaskState.DITCH_SQUARE;
-
-            DitchTaskState.reset();
-            DitchTaskState.updateBase(
-                    ditchType, refA, refB, valueText(result, "abPointDistance"));
-            DitchTaskState.setHeightMode(false);
-            DitchTaskState.setAbDistanceManual(true);
-            DitchTaskState.updatePointA(
-                    refA, "", "", numberText(a.lon), numberText(a.lat), numberText(a.heightM));
-            DitchTaskState.updatePointB(
-                    refB, "", "", numberText(b.lon), numberText(b.lat), numberText(b.heightM));
-            DitchTaskState.updateSideParams(
-                    valueText(result, "L_Width"),
-                    valueText(result, "W_Width"),
-                    valueText(result, "H_Height"),
-                    valueText(result, "R_Width"));
-
+                    ? DitchTcuWorkflow.DITCH_TRAPEZOID
+                    : DitchTcuWorkflow.DITCH_SQUARE;
+            double depthM = requiredDouble(result, "H_Height");
+            double leftWidthM = requiredDouble(result, "L_Width");
+            double rightWidthM = requiredDouble(result, "R_Width");
+            double topWidthM = ditchType == DitchTcuWorkflow.DITCH_SQUARE
+                    ? 0.0 : requiredDouble(result, "W_Width");
+            DitchTaskState.setGuidanceTrenchBottomElevationM(
+                    (a.heightM + b.heightM) / 2.0 - depthM);
             DitchTcuWorkflow workflow = DitchTcuWorkflow.getInstance();
-            workflow.submitDitchParams(new DitchTcuWorkflow.StepCallback() {
-                @Override
-                public void onSuccess() {
-                    sendState(TcuBusinessCodec.MSG_DITCH_PARAMS_ACK, workflow.getPhase().name());
-                    confirmDitchTask();
-                }
+            workflow.submitDitchParams(new DitchTcuWorkflow.Params(
+                    ditchType, a.lat, a.lon, a.heightM, b.lat, b.lon, b.heightM,
+                    depthM, leftWidthM, rightWidthM, topWidthM),
+                    new DitchTcuWorkflow.StepCallback() {
+                        @Override
+                        public void onSuccess() {
+                            sendStateToWebView(TcuBusinessCodec.MSG_DITCH_PARAMS_ACK,
+                                    workflow.getPhase().name());
+                            confirmDitchTask();
+                        }
 
-                @Override
-                public void onError(String message) {
-                    startRequested = false;
-                    reportError(WEB_EVENT_DITCH_START, message);
-                }
-            });
+                        @Override
+                        public void onError(String message) {
+                            startRequested = false;
+                            reportError(WEB_EVENT_DITCH_START, message);
+                        }
+                    });
         } catch (JSONException | IllegalArgumentException e) {
             startRequested = false;
             reportError(WEB_EVENT_DITCH_START, e.getMessage());
         }
     }
 
-    private void confirmDitchTask() {
-        DitchTcuWorkflow workflow = DitchTcuWorkflow.getInstance();
-        workflow.confirmTaskStart(new DitchTcuWorkflow.StepCallback() {
-            @Override
-            public void onSuccess() {
-                sendState(TcuBusinessCodec.MSG_TASK_CONFIRM_ACK, workflow.getPhase().name());
-                activateTask(TaskTypeState.Type.DITCH);
-            }
-
-            @Override
-            public void onError(String message) {
-                startRequested = false;
-                reportError(WEB_EVENT_DITCH_START, message);
-            }
-        });
-    }
 
     private void startSlope(@Nullable JSONObject payload) {
         if (!beginStartRequest()) {
@@ -436,56 +471,59 @@ final class WebTaskTcuController {
         }
         try {
             JSONObject result = requiredObject(payload, "repairSlopeResult");
+            // {
+            //     "PointAInfo": {
+            //         "height": "8",
+            //         "longitude": "4",
+            //         "latitude": "8"
+            //     },
+            //     "PointBInfo": {
+            //         "height": "5",
+            //         "longitude": "7",
+            //         "latitude": "88"
+            //     },
+            //     "PointCInfo": {
+            //         "height": "0.8",
+            //         "longitude": "2",
+            //         "latitude": "8"
+            //     },
+            //     "abPointDistance": 3,
+            //     "sectionParameter": {
+            //         "AB_Width": "2",
+            //         "H_Width": "3",
+            //         "L_Width": "3",
+            //         "SLOPE_TYPE": "RIGHT"
+            //     }
+            // }
             WebPoint a = parsePoint(requiredObject(result, "PointAInfo"));
             WebPoint b = parsePoint(requiredObject(result, "PointBInfo"));
             WebPoint c = parsePoint(requiredObject(result, "PointCInfo"));
             JSONObject section = requiredObject(result, "sectionParameter");
-            int refA = parseBucketMode(result.optString("selectedAPointBucketTeeth", "MIDDLE"));
-            int refB = parseBucketMode(result.optString("selectedBPointBucketTeeth", "MIDDLE"));
-            int refC = parseBucketMode(result.optString("selectedCPointBucketTeeth", "MIDDLE"));
-            double vertical = requiredDouble(section, "H_Width");
-            double horizontal = requiredDouble(section, "L_Width");
-            if (vertical == 0.0) {
+            double verticalM = requiredDouble(section, "H_Width");
+            if (verticalM == 0.0) {
                 throw new IllegalArgumentException("修坡垂高 H 不能为 0");
             }
-            double abDistance = optionalDouble(result, "abPointDistance",
+            double horizontalM = requiredDouble(section, "L_Width");
+            double abDistanceM = optionalDouble(result, "abPointDistance",
                     optionalDouble(section, "AB_Width",
                             TcuBusinessCodec.horizontalDistanceM(a.lat, a.lon, b.lat, b.lon)));
-            if (abDistance <= 0.0) {
-                abDistance = TcuBusinessCodec.horizontalDistanceM(a.lat, a.lon, b.lat, b.lon);
+            if (abDistanceM <= 0.0) {
+                abDistanceM = TcuBusinessCodec.horizontalDistanceM(a.lat, a.lon, b.lat, b.lon);
             }
-            double abLift = b.heightM - a.heightM;
-
-            SlopeRepairTaskState.reset();
-            SlopeRepairTaskState.updateRepairType(
-                    "bottom".equalsIgnoreCase(result.optString("repairSlopeSelectedType", "top"))
-                            ? SlopeRepairTaskState.TYPE_BOTTOM_LINE
-                            : SlopeRepairTaskState.TYPE_TOP_LINE);
-            SlopeRepairTaskState.setHeightMode(false);
-            SlopeRepairTaskState.updatePointA(
-                    refA, "", "", numberText(a.lon), numberText(a.lat), numberText(a.heightM));
-            SlopeRepairTaskState.updatePointB(
-                    refB, "", "", numberText(b.lon), numberText(b.lat), numberText(b.heightM));
-            SlopeRepairTaskState.updateSurvey(
-                    TcuBusinessCodec.POINT_C,
-                    TcuBusinessCodec.metersToTenthCm(c.heightM),
-                    c.lat,
-                    c.lon);
-            SlopeRepairTaskState.updateSecondStep(
-                    refA, refB, numberText(abDistance), numberText(abLift),
-                    numberText(Math.abs(abLift)));
-            SlopeRepairTaskState.updateThirdStep(
-                    refC,
-                    numberText(horizontal / vertical),
-                    numberText(vertical),
-                    numberText(horizontal),
-                    !"LEFT".equalsIgnoreCase(section.optString("SLOPE_TYPE", "RIGHT")));
-
+            int repairType = "bottom".equalsIgnoreCase(
+                    result.optString("repairSlopeSelectedType", "top"))
+                    ? SlopeRepairTcuWorkflow.TYPE_BOTTOM_LINE
+                    : SlopeRepairTcuWorkflow.TYPE_TOP_LINE;
+            SlopeRepairTaskState.setGuidanceDesignElevationM(
+                    (a.heightM + b.heightM + c.heightM) / 3.0);
             SlopeRepairTcuWorkflow workflow = SlopeRepairTcuWorkflow.getInstance();
-            workflow.submitSlopeParams(new SlopeRepairTcuWorkflow.StepCallback() {
+            workflow.submitSlopeParams(new SlopeRepairTcuWorkflow.Params(
+                    repairType, a.lat, a.lon, a.heightM, b.lat, b.lon, b.heightM,
+                    c.lat, c.lon, c.heightM, horizontalM / verticalM, verticalM, horizontalM,
+                    abDistanceM, b.heightM - a.heightM), new SlopeRepairTcuWorkflow.StepCallback() {
                 @Override
                 public void onSuccess() {
-                    sendState(TcuBusinessCodec.MSG_SLOPE_PARAMS_ACK, workflow.getPhase().name());
+                    sendStateToWebView(TcuBusinessCodec.MSG_SLOPE_PARAMS_ACK, workflow.getPhase().name());
                     confirmSlopeTask();
                 }
 
@@ -501,32 +539,15 @@ final class WebTaskTcuController {
         }
     }
 
-    private void confirmSlopeTask() {
-        SlopeRepairTcuWorkflow workflow = SlopeRepairTcuWorkflow.getInstance();
-        workflow.confirmTaskStart(new SlopeRepairTcuWorkflow.StepCallback() {
-            @Override
-            public void onSuccess() {
-                sendState(TcuBusinessCodec.MSG_TASK_CONFIRM_ACK, workflow.getPhase().name());
-                activateTask(TaskTypeState.Type.SLOPE);
-            }
-
-            @Override
-            public void onError(String message) {
-                startRequested = false;
-                reportError(WEB_EVENT_SLOPE_START, message);
-            }
-        });
-    }
-
     private boolean beginStartRequest() {
-        if (startRequested) {
-            reportError("TASK_START", "任务正在提交，请勿重复操作");
-            return false;
-        }
-        if (!isFeatureActive()) {
-            reportError("TASK_START", "TCU 尚未确认进入当前功能");
-            return false;
-        }
+        // if (startRequested) {
+        //     reportError("TASK_START", "任务正在提交，请勿重复操作");
+        //     return false;
+        // }
+        // if (!isFeatureActive()) {
+        //     reportError("TASK_START", "TCU 尚未确认进入当前功能");
+        //     return false;
+        // }
         startRequested = true;
         return true;
     }
@@ -544,6 +565,40 @@ final class WebTaskTcuController {
         }
     }
 
+    private void confirmDitchTask() {
+        DitchTcuWorkflow workflow = DitchTcuWorkflow.getInstance();
+        workflow.confirmTaskStart(new DitchTcuWorkflow.StepCallback() {
+            @Override
+            public void onSuccess() {
+                sendStateToWebView(TcuBusinessCodec.MSG_TASK_CONFIRM_ACK, workflow.getPhase().name());
+                activateTask(TaskTypeState.Type.DITCH);
+            }
+
+            @Override
+            public void onError(String message) {
+                startRequested = false;
+                reportError(WEB_EVENT_DITCH_START, message);
+            }
+        });
+    }
+
+    private void confirmSlopeTask() {
+        SlopeRepairTcuWorkflow workflow = SlopeRepairTcuWorkflow.getInstance();
+        workflow.confirmTaskStart(new SlopeRepairTcuWorkflow.StepCallback() {
+            @Override
+            public void onSuccess() {
+                sendStateToWebView(TcuBusinessCodec.MSG_TASK_CONFIRM_ACK, workflow.getPhase().name());
+                activateTask(TaskTypeState.Type.SLOPE);
+            }
+
+            @Override
+            public void onError(String message) {
+                startRequested = false;
+                reportError(WEB_EVENT_SLOPE_START, message);
+            }
+        });
+    }
+
     private void activateTask(TaskTypeState.Type type) {
         taskActivated = true;
         TaskTypeState.getInstance().setType(type);
@@ -551,6 +606,8 @@ final class WebTaskTcuController {
         host.onTaskActivated(type);
     }
 
+
+    // 发送测点请求到webview
     private void sendMeasurement(
             int pointId, int pointMode, double heightM, double lat, double lon) {
         try {
@@ -568,7 +625,9 @@ final class WebTaskTcuController {
         }
     }
 
-    private void sendState(int ackMsgId, String phase) {
+
+    // 将 TCU Workflow 应答状态通知给 WebView，但是似乎并不需要通知webview
+    private void sendStateToWebView(int ackMsgId, String phase) {
         if (destroyed) {
             return;
         }
@@ -579,9 +638,10 @@ final class WebTaskTcuController {
                     .put("phase", phase);
             if (ackMsgId == TcuBusinessCodec.MSG_FEATURE_SELECT_ACK) {
                 payload.put("ActiveFeature", taskKind.featureId);
-            } else if (ackMsgId == TcuBusinessCodec.MSG_LEVEL_PARAMS_ACK
-                    && LevelTaskState.hasAcceptedTargetHeight()) {
-                payload.put("targetHeight", LevelTaskState.getAcceptedTargetHeightM());
+//            } else if (ackMsgId == TcuBusinessCodec.MSG_LEVEL_PARAMS_ACK
+//                    && LevelTaskState.hasAcceptedTargetHeight()) {
+//                // TODO 实时高度信息
+//                payload.put("targetHeight", LevelTaskState.getAcceptedTargetHeightM());
             } else if (ackMsgId == TcuBusinessCodec.MSG_TASK_CONFIRM_ACK) {
                 payload.put("TaskState", 0x01);
             }
@@ -637,6 +697,16 @@ final class WebTaskTcuController {
         return kind == TaskKind.LEVEL ? TcuBusinessCodec.POINT_REF : TcuBusinessCodec.POINT_A;
     }
 
+    private static int parseReferencePoint(String bucketPosition) {
+        if ("LEFT".equalsIgnoreCase(bucketPosition)) {
+            return LevelTaskState.REF_LEFT;
+        }
+        if ("RIGHT".equalsIgnoreCase(bucketPosition)) {
+            return LevelTaskState.REF_RIGHT;
+        }
+        return LevelTaskState.REF_MIDDLE;
+    }
+
     private static JSONObject requiredObject(@Nullable JSONObject parent, String key)
             throws JSONException {
         if (parent == null) {
@@ -682,24 +752,6 @@ final class WebTaskTcuController {
         }
     }
 
-    private static String valueText(JSONObject object, String key) {
-        Object value = object.opt(key);
-        return value == null || value == JSONObject.NULL ? "" : String.valueOf(value).trim();
-    }
-
-    private static String numberText(double value) {
-        return String.format(Locale.US, "%.6f", value);
-    }
-
-    private static int parseBucketMode(String value) {
-        if ("LEFT".equalsIgnoreCase(value)) {
-            return LevelTaskState.REF_LEFT;
-        }
-        if ("RIGHT".equalsIgnoreCase(value)) {
-            return LevelTaskState.REF_RIGHT;
-        }
-        return LevelTaskState.REF_MIDDLE;
-    }
 
     private static final class WebPoint {
         final double lat;

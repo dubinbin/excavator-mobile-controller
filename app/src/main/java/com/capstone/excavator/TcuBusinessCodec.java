@@ -62,10 +62,12 @@ public final class TcuBusinessCodec {
     /** 组包：{@code head + msgId + data + crc + tail}。 */
     public static byte[] build(int msgId, byte[] data) {
         int dataLen = data == null ? 0 : data.length;
-        byte[] crcInput = new byte[1 + dataLen];
+        // 协议规定 CRC 范围为 MsgID + DataLen + Data。
+        byte[] crcInput = new byte[2 + dataLen];
         crcInput[0] = (byte) msgId;
+        crcInput[1] = (byte) dataLen;
         if (dataLen > 0) {
-            System.arraycopy(data, 0, crcInput, 1, dataLen);
+            System.arraycopy(data, 0, crcInput, 2, dataLen);
         }
         int crc = CRC16Modbus.calculateCRC16Modbus(crcInput);
         byte[] frame = new byte[2 + 1 + 1 + dataLen + 2 + 1];

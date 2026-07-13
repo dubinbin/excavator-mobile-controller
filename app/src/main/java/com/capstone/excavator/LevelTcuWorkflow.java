@@ -39,19 +39,24 @@ public final class LevelTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
         void onSurveyResult(double heightM, double lat, double lon);
     }
 
-    /** 0x90 已写入 {@link LevelTaskState} 时通知 UI（不依赖 pending callback 是否仍在）。 */
-    public interface SurveyStoredListener {
-        void onSurveyStored(double heightM, double lat, double lon);
+    /** Web 已计算完成的最终设计高程（米）。 */
+    public static final class Params {
+        final double targetHeightM;
+
+        public Params(double targetHeightM) {
+            if (!Double.isFinite(targetHeightM)) {
+                throw new IllegalArgumentException("目标高程无效");
+            }
+            this.targetHeightM = targetHeightM;
+        }
     }
 
     private static final LevelTcuWorkflow INSTANCE = new LevelTcuWorkflow();
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
-    @Nullable
-    private static volatile SurveyStoredListener surveyStoredListener;
-
     private volatile Phase phase = Phase.IDLE;
+    private boolean surveyCompleted;
     private int pendingExpectAck = -1;
     @Nullable
     private StepCallback pendingCallback;
@@ -66,10 +71,6 @@ public final class LevelTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
 
     public static LevelTcuWorkflow getInstance() {
         return INSTANCE;
-    }
-
-    public static void setSurveyStoredListener(@Nullable SurveyStoredListener listener) {
-        surveyStoredListener = listener;
     }
 
     public Phase getPhase() {
@@ -92,7 +93,7 @@ public final class LevelTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
                 callback);
     }
 
-    /** 通用测点（0x10），{@code pointMode} 与 {@link LevelTaskState#REF_LEFT} 等一致。 */
+    /** 通用测点（0x10），{@code pointMode}=左/中/右（0/1/2）。 */
     public void requestSurvey(int pointMode, SurveyCallback callback) {
         if (!ensureLink(callback)) {
             return;
@@ -111,65 +112,24 @@ public final class LevelTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
     }
 
     /**
-     * 下发找平目标高度（0x11）。
-     * 高度定点：TargetHeight = 测点高度(0x90) + 填挖量。
-     * 坐标定点：TargetHeight = 用户设计高程(tvCoordZ)；仍需先完成参考点测点(0x10/0x90)。
-     */
-    public void submitLevelParams(StepCallback callback) {
-        if (!ensureLink(callback)) {
-            return;
-        }
-        if (phase.ordinal() < Phase.SURVEY_DONE.ordinal()) {
-            fail(callback, "请先完成参考点测点");
-            return;
-        }
-        if (!LevelTaskState.hasSurveyHeight()) {
-            fail(callback, "缺少测点高度，请重新测点");
-            return;
-        }
-        int targetTenthCm;
-        if (LevelTaskState.isHeightMode()) {
-            double fillOffsetM = LevelTaskState.getTargetHeightM();
-            if (Double.isNaN(fillOffsetM)) {
-                fail(callback, "请填写填挖量");
-                return;
-            }
-            targetTenthCm = LevelTaskState.getSurveyHeightTenthCm()
-                    + TcuBusinessCodec.metersToTenthCm(fillOffsetM);
-        } else {
-            double designM = LevelTaskState.getTargetZM();
-            if (Double.isNaN(designM)) {
-                fail(callback, "请填写设计高程");
-                return;
-            }
-            targetTenthCm = TcuBusinessCodec.metersToTenthCm(designM);
-        }
-        LevelTaskState.setPendingTargetHeightTenthCm(targetTenthCm);
-        sendAndWait(TcuBusinessCodec.MSG_LEVEL_PARAMS_ACK,
-                TcuBusinessCodec.buildLevelParams(targetTenthCm),
-                callback);
-    }
-
-    /**
      * WebView 已在本地完成目标高程计算时，直接下发最终目标高程。
      * <p>
      * 这里接收的是最终设计高程，不再重复叠加测点高度；仍要求先完成 0x10/0x90，
      * 以保证流程符合 imu.txt §6.2。
      */
-    public void submitLevelParams(double targetHeightM, StepCallback callback) {
+    public void submitLevelParams(Params params, StepCallback callback) {
         if (!ensureLink(callback)) {
             return;
         }
-        if (phase.ordinal() < Phase.SURVEY_DONE.ordinal() || !LevelTaskState.hasSurveyHeight()) {
+        if (!surveyCompleted) {
             fail(callback, "请先完成参考点测点");
             return;
         }
-        if (!Double.isFinite(targetHeightM)) {
+        if (params == null) {
             fail(callback, "目标高程无效");
             return;
         }
-        int targetTenthCm = TcuBusinessCodec.metersToTenthCm(targetHeightM);
-        LevelTaskState.setPendingTargetHeightTenthCm(targetTenthCm);
+        int targetTenthCm = TcuBusinessCodec.metersToTenthCm(params.targetHeightM);
         sendAndWait(TcuBusinessCodec.MSG_LEVEL_PARAMS_ACK,
                 TcuBusinessCodec.buildLevelParams(targetTenthCm),
                 callback);
@@ -222,6 +182,7 @@ public final class LevelTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
     public void resetLocal() {
         clearPending();
         phase = Phase.IDLE;
+        surveyCompleted = false;
         LevelTaskState.clearTcuSession();
     }
 
@@ -298,19 +259,11 @@ public final class LevelTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
         double truncatedLon = (long)(lon * 10000) / 10000.0;
 
         double heightM = TcuBusinessCodec.tenthCmToMeters(heightTenthCm);
-        LevelTaskState.updateSurveyResult(heightTenthCm, truncatedLat, truncatedLon);
+        LevelTaskState.updateSurveyResult(heightTenthCm);
+        surveyCompleted = true;
         phase = Phase.SURVEY_DONE;
-        notifySurveyStored(heightM, truncatedLat, truncatedLon);
         succeedPendingSurvey(heightM, truncatedLat, truncatedLon);
         return true;
-    }
-
-    private void notifySurveyStored(double heightM, double lat, double lon) {
-        SurveyStoredListener listener = surveyStoredListener;
-        if (listener == null) {
-            return;
-        }
-        mainHandler.post(() -> listener.onSurveyStored(heightM, lat, lon));
     }
 
     private boolean handleLevelParamsAck(byte[] data) {
@@ -324,6 +277,7 @@ public final class LevelTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
             return true;
         }
         int acceptedTenthCm = TcuBusinessCodec.readInt32Be(data, 1);
+        // TCU 回传找平参数应答帧，`MsgID = 0x91`，确认最终采用的目标高度。
         LevelTaskState.setAcceptedTargetHeightTenthCm(acceptedTenthCm);
         phase = Phase.PARAMS_ACCEPTED;
         succeedPending();
@@ -344,7 +298,6 @@ public final class LevelTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
             failPending("任务未激活: " + TcuBusinessCodec.resultMessage(result));
             return true;
         }
-        LevelTaskState.setTcuTaskActive(true);
         phase = Phase.TASK_ACTIVE;
         succeedPending();
         return true;
@@ -419,10 +372,7 @@ public final class LevelTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
     }
 
     private static int normalizePointMode(int pointMode) {
-        if (pointMode < LevelTaskState.REF_LEFT || pointMode > LevelTaskState.REF_RIGHT) {
-            return LevelTaskState.REF_MIDDLE;
-        }
-        return pointMode;
+        return pointMode < 0 || pointMode > 2 ? 1 : pointMode;
     }
 
     private void succeedPending() {

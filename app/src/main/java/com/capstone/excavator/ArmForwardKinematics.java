@@ -1,16 +1,14 @@
 package com.capstone.excavator;
 
 /**
- * 臂正运动学：按 {@code excavator_kinematics_knowledge_base.md} §5 计算斗尖在
- * 驾驶舱本地坐标系下的 (x, z)。所有输入角度均为「相对水平面的绝对俯仰角」（度）。
+ * 挖掘机臂正运动学。
  *
- * 对应公式（θ1 = boom_abs, θ1+θ2 = stick_abs, θ1+θ2+θ3 = bucket_abs）：
- * <pre>
- * x = L1·cos(θ1) + L2·cos(θ1+θ2) + L3·cos(θ1+θ2+θ3)
- * z = L1·sin(θ1) + L2·sin(θ1+θ2) + L3·sin(θ1+θ2+θ3)
- * </pre>
- * <p>
- * 连杆长度 {@code boomLength}/{@code stickLength}/{@code bucketLength} 单位为米。
+ * <p>原始输入不是三个构件相对地面的绝对角，而是串联关节角：大臂相对驾驶室、小臂
+ * 相对大臂（180° 为参考线）以及铲斗相对小臂（90° 为参考线）。本类先将其递推为
+ * 构件绝对俯仰角，再计算斗尖在大臂根铰点坐标系下的 (x, z)。详细约定见
+ * {@code excavator_kinematics_knowledge_base.md}。</p>
+ *
+ * <p>长度输入的单位为米；角度输入的单位为度。</p>
  */
 public final class ArmForwardKinematics {
 
@@ -23,10 +21,86 @@ public final class ArmForwardKinematics {
         }
     }
 
+    /** 一次解算得到的中间角度和斗尖位置，便于日志、标定和单元测试。 */
+    public static final class Solution {
+        public final double boomAbsDeg;
+        public final double stickAbsDeg;
+        public final double bucketAbsDeg;
+        public final double tipAbsDeg;
+        public final TipPosition tip;
+
+        private Solution(double boomAbsDeg, double stickAbsDeg,
+                         double bucketAbsDeg, double tipAbsDeg,
+                         TipPosition tip) {
+            this.boomAbsDeg = boomAbsDeg;
+            this.stickAbsDeg = stickAbsDeg;
+            this.bucketAbsDeg = bucketAbsDeg;
+            this.tipAbsDeg = tipAbsDeg;
+            this.tip = tip;
+        }
+    }
+
     private ArmForwardKinematics() {
     }
 
-    /** 仅计算斗尖 z（垂直高度，相对大臂铰接点）。 */
+    /** 将角度归一化为 (-180, 180]，用于小臂的 180° 参考线跨象限转换。 */
+    public static double wrap180(double angleDeg) {
+        double result = angleDeg % 360.0;
+        if (result <= -180.0) result += 360.0;
+        if (result > 180.0) result -= 360.0;
+        return result;
+    }
+
+    /**
+     * 根据实时相对关节角计算斗尖位置。
+     *
+     * <pre>
+     * boomJoint   = rawBoom + boomSensorOffset
+     * stickJoint  = wrap180(rawStick - 180 + stickSensorOffset)
+     * bucketJoint = rawBucket - 90 + bucketSensorOffset
+     * boomAbs     = cabinPitch + boomJoint
+     * stickAbs    = boomAbs + stickJoint
+     * bucketAbs   = stickAbs + bucketJoint
+     * tipAbs      = bucketAbs + bucketTipAngleOffset
+     * </pre>
+     *
+     * {@code bucketTipAngleOffsetDeg} 是斗轴到斗尖向量的固定几何夹角，不能与铲斗
+     * IMU 安装偏移混用。
+     */
+    public static Solution solveRelativeAngles(
+            double cabinPitchDeg,
+            double rawBoomDeg,
+            double rawStickDeg,
+            double rawBucketDeg,
+            double boomSensorOffsetDeg,
+            double stickSensorOffsetDeg,
+            double bucketSensorOffsetDeg,
+            double bucketTipAngleOffsetDeg,
+            double boomLength,
+            double stickLength,
+            double bucketTipLength) {
+        double boomJointDeg = rawBoomDeg + boomSensorOffsetDeg;
+        double stickJointDeg = wrap180(rawStickDeg - 180.0 + stickSensorOffsetDeg);
+        double bucketJointDeg = rawBucketDeg - 90.0 + bucketSensorOffsetDeg;
+
+        double boomAbsDeg = cabinPitchDeg + boomJointDeg;
+        double stickAbsDeg = boomAbsDeg + stickJointDeg;
+        double bucketAbsDeg = stickAbsDeg + bucketJointDeg;
+        double tipAbsDeg = bucketAbsDeg + bucketTipAngleOffsetDeg;
+
+        TipPosition tip = bucketTip(
+                boomAbsDeg, stickAbsDeg, tipAbsDeg,
+                boomLength, stickLength, bucketTipLength);
+        return new Solution(boomAbsDeg, stickAbsDeg, bucketAbsDeg, tipAbsDeg, tip);
+    }
+
+    /**
+     * 仅计算斗尖 z（垂直高度，相对大臂铰接点）。
+     *
+     * @deprecated 参数是构件/斗尖的绝对角；实时数据请使用
+     * {@link #solveRelativeAngles(double, double, double, double, double, double, double, double, double, double, double)}。
+     */
+    @Deprecated
     public static double bucketTipZ(double boomAbsDeg,
                                     double stickAbsDeg,
                                     double bucketAbsDeg,
@@ -41,7 +115,10 @@ public final class ArmForwardKinematics {
                 + bucketLength * Math.sin(bucketAbsRad);
     }
 
-    /** 同时返回 (x, z)。 */
+    /**
+     * 根据构件/斗尖的绝对角同时返回 (x, z)。
+     * 实时数据请先通过 {@link #solveRelativeAngles(double, double, double, double, double, double, double, double, double, double, double)} 转换。
+     */
     public static TipPosition bucketTip(double boomAbsDeg,
                                         double stickAbsDeg,
                                         double bucketAbsDeg,

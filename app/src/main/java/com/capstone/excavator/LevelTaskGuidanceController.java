@@ -8,119 +8,132 @@ import android.view.ViewGroup;
 import java.util.Random;
 
 /**
- * 找平 / 挖沟作业引导 UI：左右竖条度量、左右速度方向卡、设计面快照与填挖量刷新。
- * MainActivity 在 LEVEL 或 DITCH 任务 RUNNING 时调用 {@link #onGuidanceRunningChanged}。
+ * 找平 / 挖沟作业引导 UI 控制器。
+ *
+ * <p>本类只负责把外部已经计算好的左右偏离量显示到 View，不读取任务状态、TCU 或 IMU
+ * 数据，也不负责填挖量、斗尖位置、限幅或平滑计算。</p>
+ *
+ * <p>偏离量单位统一为厘米：正值表示偏高（需要向下），负值表示偏低（需要向上）。</p>
  */
 public final class LevelTaskGuidanceController {
 
-    private static final String TAG = "LevelGauge";
+    private static final String TAG = "LevelGuidanceUi";
 
-    /** 坡面任务时候距离 左边的样式边距（dp） */
+    /** 每侧 19 格，每格默认表示 5 cm。 */
+    private static final float DEFAULT_ACTIVITY_GAUGE_RANGE_CM = 19f * 5f;
+
+    /** 速度方向卡的中立区，避免接近零点时上下方向频繁跳动。 */
+    private static final float SPEED_DIRECTION_DEAD_ZONE_CM = 0.5f;
+
+    /** 修坡任务时速度方向卡的水平边距（dp）。 */
     private static final float MARGIN_SLOPE_TASK_DP = 80.44f;
 
-    /** 默认时候距离 左边的样式边距（dp） */
+    /** 找平 / 挖沟任务时速度方向卡的水平边距（dp）。 */
     private static final float MARGIN_DEFAULT_DP = 28.44f;
 
-    /** 竖条槽 格数 */
-    private static final int GAUGE_SLOTS_PER_HALF = 19;
-
-    /** 度量单位 */
-    private enum GaugeUnit { CM, DEG }
-
-    /** 度量单位配置 */
-    private static final class GaugeUnitConfig {
-        /** 厘米每槽 */
-        final float cmPerSlot;
-        final float degPerSlot;
-
-        GaugeUnitConfig(float cmPerSlot, float degPerSlot) {
-            this.cmPerSlot = cmPerSlot;
-            this.degPerSlot = degPerSlot;
-        }
-
-        float rangeFor(GaugeUnit u) {
-            return GAUGE_SLOTS_PER_HALF * (u == GaugeUnit.CM ? cmPerSlot : degPerSlot);
-        }
-    }
-
-    private final GaugeUnitConfig gaugeUnitConfig = new GaugeUnitConfig(5f, 3f);
-    private GaugeUnit currentGaugeUnit = GaugeUnit.CM;
-
+    /** 找平 / 挖沟使用的左右光谱竖条。 */
     private VerticalSpectrumGaugeView leftActivityGauge;
     private VerticalSpectrumGaugeView rightActivityGauge;
-    private SingleBarGaugeView leftSlopeGauge;
-    private SingleBarGaugeView rightSlopeGauge;
+
+    /** 左右数值及方向卡。 */
     private SpeedDirectionIndicatorView leftSpeedIndicator;
     private SpeedDirectionIndicatorView rightSpeedIndicator;
 
-    private ImuAngleConverter.Config imuAngleConfig;
-    /** 斗杆角度 */
-    private float boomAngleDeg;
-    /** 铲斗角度 */
-    private float stickAngleDeg;
-    /** 铲斗角度 */
-    private float bucketAngleDeg;
+    private final Random mockDeviationRandom = new Random();
 
-    /** 设计面基准值 */
-    private Double designZLocal;
-    /** 作业运行状态前一次值 */
-    private boolean guidanceRunningPrev;
-    /** 设计面快照等待标志 */
-    private boolean pendingDesignSnapshot;
-    /** 当前作业类型 */
-    private TaskTypeState.Type activeGuidanceTask = TaskTypeState.Type.NONE;
-    /** 最近一帧 TCU 0x52 实时引导结果。 */
-    private TcuGuidanceState.Snapshot latestTcuGuidance;
-
-    /** 速度方向卡阈值（厘米） */
-    private static final float GAUGE_DIR_THRESHOLD_CM = 0.5f;
-    /** 找平度量条最大值（厘米） */
-    private static final float LEVEL_DEPTH_CLAMP_CM = 200f;
-    /** 找平度量条平滑因子 */
-    private static final float LEVEL_DEPTH_EMA_ALPHA = 0.35f;
-    /** 找平度量条平滑值 */
-    private float smoothedLevelDepthCm;
-    /** 找平度量条平滑初始化标志 */
-    private boolean levelDepthSmoothingInitialized;
-
-    /** 视图绑定标志 */
-    private boolean viewsBound;
-    private final Random mockTipHeightRandom = new Random();
-    private double mockTipHeightM = Double.NaN;
-    private double mockLocalTipZRefM = Double.NaN;
-
-    /** 设置 IMU 角度配置 */
-    public void setImuAngleConfig(ImuAngleConverter.Config config) {
-        imuAngleConfig = config;
-    }
-
-    /** 设置 IMU 角度 */
-    public void setImuAngles(float boomDeg, float stickDeg, float bucketDeg) {
-        boomAngleDeg = boomDeg;
-        stickAngleDeg = stickDeg;
-        bucketAngleDeg = bucketDeg;
-    }
-
-    /** 绑定速度方向卡、活动竖条（在 Activity {@code setContentView} 之后调用一次）。 */
+    /**
+     * 绑定两组引导 View。在 Activity {@code setContentView} 之后调用一次。
+     */
     public void bind(Activity activity) {
+        leftActivityGauge = activity.findViewById(R.id.leftActivityGauge);
+        rightActivityGauge = activity.findViewById(R.id.rightActivityGauge);
         leftSpeedIndicator = activity.findViewById(R.id.leftSpeedIndicator);
         rightSpeedIndicator = activity.findViewById(R.id.rightSpeedIndicator);
-        if (leftActivityGauge == null) {
-            leftActivityGauge = activity.findViewById(R.id.leftActivityGauge);
-        }
-        if (rightActivityGauge == null) {
-            rightActivityGauge = activity.findViewById(R.id.rightActivityGauge);
-        }
-        VerticalActivityPanelView leftSlopePanel = activity.findViewById(R.id.verticalActivityPanelLeft);
-        VerticalActivityPanelView rightSlopePanel = activity.findViewById(R.id.verticalActivityPanelRight);
-        leftSlopeGauge = leftSlopePanel == null ? null : leftSlopePanel.getGauge();
-        rightSlopeGauge = rightSlopePanel == null ? null : rightSlopePanel.getGauge();
-        applyGaugeUnitToViews();
-        viewsBound = true;
+
+        setActivityGaugeRangeCm(DEFAULT_ACTIVITY_GAUGE_RANGE_CM);
+        clear();
     }
 
     /**
-     * 任意作业激活时：速度方向卡水平边距与显隐（坡面任务边距更大）。
+     * 更新左右 {@link VerticalSpectrumGaugeView}。
+     *
+     * @param leftDeviationCm 左侧有符号偏离量（cm）
+     * @param rightDeviationCm 右侧有符号偏离量（cm）
+     */
+    public void updateActivityGaugeDeviations(
+            float leftDeviationCm,
+            float rightDeviationCm) {
+        setGaugeValue(leftActivityGauge, leftDeviationCm);
+        setGaugeValue(rightActivityGauge, rightDeviationCm);
+    }
+
+    /**
+     * 临时模拟入口：生成两个独立随机偏离量并只更新左右光谱竖条。
+     *
+     * <p>真实 TCU 填挖 / 机身偏离公式接入后，调用方应改用
+     * {@link #updateActivityGaugeDeviations(float, float)}。</p>
+     */
+    public void updateMockActivityGaugeDeviations() {
+        float leftDeviationCm = nextMockDeviationCm();
+        float rightDeviationCm = nextMockDeviationCm();
+        updateActivityGaugeDeviations(leftDeviationCm, rightDeviationCm);
+        Log.d(TAG, "mock gauges: leftCm=" + leftDeviationCm
+                + ", rightCm=" + rightDeviationCm);
+    }
+
+    /**
+     * 更新左右 {@link SpeedDirectionIndicatorView}。
+     *
+     * <p>每侧独立根据偏离量决定方向，并显示偏离量的绝对值：</p>
+     * <ul>
+     *     <li>大于中立区：高亮向下；</li>
+     *     <li>小于中立区负值：高亮向上；</li>
+     *     <li>位于中立区：方向中立。</li>
+     * </ul>
+     *
+     * @param leftDeviationCm 左侧有符号偏离量（cm）
+     * @param rightDeviationCm 右侧有符号偏离量（cm）
+     */
+    public void updateSpeedIndicatorDeviations(
+            float leftDeviationCm,
+            float rightDeviationCm) {
+        setSpeedIndicatorValue(leftSpeedIndicator, leftDeviationCm);
+        setSpeedIndicatorValue(rightSpeedIndicator, rightDeviationCm);
+    }
+
+    /** 设置左右光谱竖条的最大绝对量程（cm）。 */
+    public void setActivityGaugeRangeCm(float maxAbsCm) {
+        if (!isFinite(maxAbsCm) || maxAbsCm <= 0f) {
+            return;
+        }
+        if (leftActivityGauge != null) {
+            leftActivityGauge.setRangeMax(maxAbsCm);
+        }
+        if (rightActivityGauge != null) {
+            rightActivityGauge.setRangeMax(maxAbsCm);
+        }
+    }
+
+    /** 清空左右光谱竖条，不影响速度方向卡。 */
+    public void clearActivityGauges() {
+        setGaugeValue(leftActivityGauge, 0f);
+        setGaugeValue(rightActivityGauge, 0f);
+    }
+
+    /** 清空左右速度方向卡，不影响光谱竖条。 */
+    public void clearSpeedIndicators() {
+        setSpeedIndicatorValue(leftSpeedIndicator, 0f);
+        setSpeedIndicatorValue(rightSpeedIndicator, 0f);
+    }
+
+    /** 清空两组引导 View。 */
+    public void clear() {
+        clearActivityGauges();
+        clearSpeedIndicators();
+    }
+
+    /**
+     * 设置速度方向卡的显隐及布局边距。
      */
     public void applySpeedIndicatorOverlay(boolean slopeTask, boolean taskActive) {
         float marginDp = slopeTask ? MARGIN_SLOPE_TASK_DP : MARGIN_DEFAULT_DP;
@@ -130,408 +143,45 @@ public final class LevelTaskGuidanceController {
         setVisible(rightSpeedIndicator, taskActive);
     }
 
-    /**
-     * 找平或挖沟作业 RUNNING 边沿：进入时快照设计面并刷新；退出时清零。
-     */
-    public void onGuidanceRunningChanged(
-            boolean guidanceRunning,
-            /** 当前作业类型 */
-            TaskTypeState.Type taskType,
-            /** 是否使用真实数据 */
-            boolean useRealData) {
-        if (guidanceRunning && !guidanceRunningPrev) {
-            activeGuidanceTask = taskType;
-            latestTcuGuidance = TcuGuidanceState.getInstance().getLatest();
-            setGaugeUnit(GaugeUnit.CM);
-            resetLevelDepthSmoothing();
-            designZLocal = null;
-            resetMockTipHeight();
-            // 推迟到首次 setImuAngles 之后快照，避免任务刚激活时角度仍为 0°
-            pendingDesignSnapshot = true;
-            refresh(useRealData);
-        } else if (!guidanceRunning && guidanceRunningPrev) {
-            activeGuidanceTask = TaskTypeState.Type.NONE;
-            latestTcuGuidance = null;
-            designZLocal = null;
-            resetMockTipHeight();
-            pendingDesignSnapshot = false;
-            resetLevelDepthSmoothing();
-            if (leftActivityGauge != null) {
-                leftActivityGauge.setValue(0f);
-            }
-            if (rightActivityGauge != null) {
-                rightActivityGauge.setValue(0f);
-            }
-            if (leftSlopeGauge != null) {
-                leftSlopeGauge.setValue(0f);
-            }
-            if (rightSlopeGauge != null) {
-                rightSlopeGauge.setValue(0f);
-            }
-
-        
-            applySpeedIndicators(0f);
+    private static void setGaugeValue(VerticalSpectrumGaugeView gauge, float deviationCm) {
+        if (gauge != null) {
+            gauge.setValue(sanitizeDeviation(deviationCm));
         }
-        guidanceRunningPrev = guidanceRunning;
     }
 
-    /** @deprecated 请用 {@link #onGuidanceRunningChanged(boolean, TaskTypeState.Type, boolean)} */
-    public void onLevelRunningChanged(boolean levelRunning, boolean useRealData) {
-        onGuidanceRunningChanged(
-                levelRunning,
-                levelRunning ? TaskTypeState.Type.LEVEL : TaskTypeState.Type.NONE,
-                useRealData);
-    }
-
-    /**
-     * IMU/角度更新后调用：必要时补设计面快照，并刷新度量条与速度方向卡。
-     */
-    public void onImuUpdate(boolean useRealData) {
-        tryCaptureDesignSnapshot(useRealData);
-        refresh(useRealData);
-    }
-
-    /** 收到 TCU 0x52 后立即刷新，不必等待下一帧 IMU 数据。 */
-    public void onTcuGuidanceUpdate(
-            TcuGuidanceState.Snapshot snapshot,
-            boolean useRealData) {
-        latestTcuGuidance = snapshot;
-        refresh(useRealData);
-    }
-
-    /** 在 IMU 角度已写入后建立设计面基准（与实时斗尖 Z 同一套角度）。 */
-    private void tryCaptureDesignSnapshot(boolean useRealData) {
-        if (!guidanceRunningPrev || !pendingDesignSnapshot || !useRealData) {
+    private static void setSpeedIndicatorValue(
+            SpeedDirectionIndicatorView indicator,
+            float deviationCm) {
+        if (indicator == null) {
             return;
         }
-        if (snapshotDesignSurface(useRealData)) {
-            pendingDesignSnapshot = false;
-            Log.d(TAG, "design snapshot captured after first IMU frame");
-        }
+        float valueCm = sanitizeDeviation(deviationCm);
+        indicator.setSpeed(Math.abs(valueCm));
+        indicator.setDirection(directionForDeviation(valueCm));
     }
 
-    /** @return {@code true} 已成功写入 {@link #designZLocal} */
-    private boolean snapshotDesignSurface(boolean useRealData) {
-        if (!useRealData) {
-            designZLocal = null;
-            return false;
+    private static int directionForDeviation(float deviationCm) {
+        if (deviationCm > SPEED_DIRECTION_DEAD_ZONE_CM) {
+            return SpeedDirectionIndicatorView.DIRECTION_DOWN_HIGHLIGHT;
         }
-        if (activeGuidanceTask == TaskTypeState.Type.DITCH) {
-            snapshotDitchDesignSurface();
-            return designZLocal != null;
+        if (deviationCm < -SPEED_DIRECTION_DEAD_ZONE_CM) {
+            return SpeedDirectionIndicatorView.DIRECTION_UP_HIGHLIGHT;
         }
-        if (activeGuidanceTask == TaskTypeState.Type.LEVEL) {
-            snapshotLevelDesignSurface();
-            return designZLocal != null;
-        }
-        if (activeGuidanceTask == TaskTypeState.Type.SLOPE) {
-            snapshotSlopeDesignSurface();
-            return designZLocal != null;
-        }
-        designZLocal = null;
-        return false;
+        return SpeedDirectionIndicatorView.DIRECTION_NEUTRAL;
     }
 
-    private void snapshotLevelDesignSurface() {
-        designZLocal = resolveLevelDesignElevationM();
-        if (designZLocal == null || Double.isNaN(designZLocal)) {
-            designZLocal = null;
-            return;
-        }
-        Log.d(TAG, "level snapshot design_elevation=" + designZLocal
-                + " (tipHeightSource=" + currentTipHeightSource() + ")");
+    private float nextMockDeviationCm() {
+        return (mockDeviationRandom.nextFloat() * 2f - 1f)
+                * DEFAULT_ACTIVITY_GAUGE_RANGE_CM;
     }
 
-    private void snapshotDitchDesignSurface() {
-        double trenchBottom = DitchTaskState.getGuidanceTrenchBottomElevationM();
-        if (Double.isNaN(trenchBottom)) {
-            designZLocal = null;
-            return;
-        }
-        designZLocal = trenchBottom;
-        Log.d(TAG, "ditch snapshot trench_bottom_elevation=" + designZLocal
-                + " (heightMode=" + DitchTaskState.isHeightMode()
-                + ", tipHeightSource=" + currentTipHeightSource() + ")");
+    /** 无效输入不保留旧 UI，统一回到零值。 */
+    private static float sanitizeDeviation(float deviationCm) {
+        return isFinite(deviationCm) ? deviationCm : 0f;
     }
 
-    private void snapshotSlopeDesignSurface() {
-        double design = SlopeRepairTaskState.getGuidanceDesignElevationM();
-        if (Double.isNaN(design)) {
-            designZLocal = null;
-            return;
-        }
-        designZLocal = design;
-        Log.d(TAG, "slope snapshot design_elevation=" + designZLocal
-                + " (tipHeightSource=" + currentTipHeightSource() + ")");
-    }
-
-    private double currentBucketTipZ() {
-        double localTipZ = currentBucketTipLocalZ();
-        if (Double.isNaN(localTipZ)) {
-            return Double.NaN;
-        }
-        if (BucketTipHeightState.hasFreshTipHeight()) {
-            mockTipHeightM = Double.NaN;
-            mockLocalTipZRefM = Double.NaN;
-            return BucketTipHeightState.getTipHeightM();
-        }
-        return mockBucketTipHeightM(localTipZ);
-    }
-
-    private double currentBucketTipLocalZ() {
-        if (imuAngleConfig == null) {
-            return Double.NaN;
-        }
-        ImuAngleConverter.Dimensions dim = imuAngleConfig.dimensions;
-        if (dim == null || dim.boomLength <= 0 || dim.stickLength <= 0 || dim.bucketLength <= 0) {
-            return Double.NaN;
-        }
-        ImuAngleConverter.ImuInstallationOffset off = imuAngleConfig.imuOffsets;
-        float boomAbsDeg = boomAngleDeg + (float) (off != null ? off.boomImuOffsetDeg : 0.0);
-        float stickAbsDeg = stickAngleDeg + (float) (off != null ? off.stickImuOffsetDeg : 0.0);
-        float bucketAbsDeg = bucketAngleDeg + (float) (off != null ? off.bucketImuOffsetDeg : 0.0);
-        return ArmForwardKinematics.bucketTipZ(
-                boomAbsDeg,
-                stickAbsDeg,
-                bucketAbsDeg,
-                ImuPreferences.lengthMmToMeters(dim.boomLength),
-                ImuPreferences.lengthMmToMeters(dim.stickLength),
-                ImuPreferences.lengthMmToMeters(dim.bucketLength));
-    }
-
-    private double mockBucketTipHeightM(double localTipZ) {
-        if (Double.isNaN(mockTipHeightM)) {
-            double design = designZLocal != null && !Double.isNaN(designZLocal) ? designZLocal : 0.0;
-            mockTipHeightM = design + (mockTipHeightRandom.nextDouble() - 0.5) * 1.2;
-            mockLocalTipZRefM = localTipZ;
-            return mockTipHeightM;
-        }
-        double localDelta = localTipZ - mockLocalTipZRefM;
-        double jitterM = (mockTipHeightRandom.nextDouble() - 0.5) * 0.015;
-        return mockTipHeightM + localDelta + jitterM;
-    }
-
-    private void resetMockTipHeight() {
-        mockTipHeightM = Double.NaN;
-        mockLocalTipZRefM = Double.NaN;
-    }
-
-    private String currentTipHeightSource() {
-        return BucketTipHeightState.hasFreshTipHeight() ? "TCU_TIP_HEIGHT" : "MOCK_TIP_HEIGHT";
-    }
-
-    private Double resolveLevelDesignElevationM() {
-        if (LevelTaskState.hasAcceptedTargetHeight()) {
-            return LevelTaskState.getAcceptedTargetHeightM();
-        }
-        if (LevelTaskState.isHeightMode()) {
-            return LevelTaskState.getDesignElevationM();
-        }
-        return LevelTaskState.getTargetZM();
-    }
-
-    /** 刷新度量条与速度方向卡 */
-    private void refresh(boolean useRealData) {
-        /** 视图绑定标志 */
-        if (!viewsBound) {
-            return;
-        }
-        if (leftActivityGauge == null && rightActivityGauge == null
-                && leftSlopeGauge == null && rightSlopeGauge == null
-                && leftSpeedIndicator == null && rightSpeedIndicator == null) {
-            return;
-        }
-        tryCaptureDesignSnapshot(useRealData);
-
-        /** 作业运行状态前一次值 */
-        if (!guidanceRunningPrev) {
-            resetLevelDepthSmoothing();
-            zeroGaugesAndIndicators();
-            return;
-        }
-        Float tcuGuidanceErrorCm = resolveFreshTcuGuidanceErrorCm();
-        if (tcuGuidanceErrorCm != null) {
-            applyGuidanceValueCm(tcuGuidanceErrorCm);
-            return;
-        }
-        if (!useRealData) {
-            resetLevelDepthSmoothing();
-            zeroGaugesAndIndicators();
-            return;
-        }
-        if (designZLocal == null) {
-            if (leftActivityGauge != null) {
-                leftActivityGauge.setValue(0f);
-            }
-            if (rightActivityGauge != null) {
-                rightActivityGauge.setValue(0f);
-            }
-            if (leftSlopeGauge != null) {
-                leftSlopeGauge.setValue(0f);
-            }
-            if (rightSlopeGauge != null) {
-                rightSlopeGauge.setValue(0f);
-            }
-            applySpeedIndicators(0f);
-            return;
-        }
-        /** 当前斗尖高程 核心调用方法 */
-        double zTipNow = currentBucketTipZ();
-        if (Double.isNaN(zTipNow)) {
-            return;
-        }
-        /** 计算当前斗尖高程与设计面高程的差值 */
-        System.out.println("LevelTaskGuidanceController: refresh: tipHeight=" + zTipNow
-                + ", designElevation=" + designZLocal
-                + ", source=" + currentTipHeightSource());
-        float rawValue;
-        if (currentGaugeUnit == GaugeUnit.CM) {
-            rawValue = (float) ((zTipNow - designZLocal) * 100.0);
-            rawValue = clampLevelDepthCm(rawValue);
-        } else {
-            rawValue = (float) (zTipNow - designZLocal);
-        }
-        applyGuidanceValueCm(rawValue);
-    }
-
-    private void applyGuidanceValueCm(float rawValueCm) {
-        float value = smoothLevelDepthCm(clampLevelDepthCm(rawValueCm));
-        if (leftActivityGauge != null) {
-            leftActivityGauge.setValue(value);
-        }
-        if (rightActivityGauge != null) {
-            rightActivityGauge.setValue(value);
-        }
-        if (leftSlopeGauge != null) {
-            leftSlopeGauge.setValue(value);
-        }
-        if (rightSlopeGauge != null) {
-            rightSlopeGauge.setValue(value);
-        }
-        applySpeedIndicators(value);
-    }
-
-    private Float resolveFreshTcuGuidanceErrorCm() {
-        TcuGuidanceState.Snapshot snapshot = latestTcuGuidance;
-        if (snapshot == null || !snapshot.isFresh()) {
-            return null;
-        }
-        TcuGuidanceCodec.Data data = snapshot.data;
-        if (data == null
-                || data.taskState != TcuGuidanceCodec.TASK_ACTIVE
-                || !data.isModelValid()
-                || !featureMatchesTask(data.featureId, activeGuidanceTask)) {
-            return null;
-        }
-        if (data.hasGuidanceError()) {
-            return data.guidanceErrorTenthCm / 10f;
-        }
-        if (data.hasCurrentTipHeight() && data.hasTargetHeight()) {
-            return (data.currentTipHeightTenthCm - data.targetHeightTenthCm) / 10f;
-        }
-        return null;
-    }
-
-    private static boolean featureMatchesTask(int featureId, TaskTypeState.Type taskType) {
-        if (taskType == TaskTypeState.Type.LEVEL) {
-            return featureId == TcuBusinessCodec.FEATURE_LEVEL;
-        }
-        if (taskType == TaskTypeState.Type.DITCH) {
-            return featureId == TcuBusinessCodec.FEATURE_DITCH;
-        }
-        if (taskType == TaskTypeState.Type.SLOPE) {
-            return featureId == TcuBusinessCodec.FEATURE_SLOPE;
-        }
-        return false;
-    }
-
-    private void zeroGaugesAndIndicators() {
-        if (leftActivityGauge != null) {
-            leftActivityGauge.setValue(0f);
-        }
-        if (rightActivityGauge != null) {
-            rightActivityGauge.setValue(0f);
-        }
-        if (leftSlopeGauge != null) {
-            leftSlopeGauge.setValue(0f);
-        }
-        if (rightSlopeGauge != null) {
-            rightSlopeGauge.setValue(0f);
-        }
-        applySpeedIndicators(0f);
-    }
-
-    private void resetLevelDepthSmoothing() {
-        smoothedLevelDepthCm = 0f;
-        levelDepthSmoothingInitialized = false;
-    }
-
-    private static float clampLevelDepthCm(float valueCm) {
-        if (valueCm > LEVEL_DEPTH_CLAMP_CM) {
-            return LEVEL_DEPTH_CLAMP_CM;
-        }
-        if (valueCm < -LEVEL_DEPTH_CLAMP_CM) {
-            return -LEVEL_DEPTH_CLAMP_CM;
-        }
-        return valueCm;
-    }
-
-    private float smoothLevelDepthCm(float rawValueCm) {
-        if (!levelDepthSmoothingInitialized) {
-            smoothedLevelDepthCm = rawValueCm;
-            levelDepthSmoothingInitialized = true;
-            return rawValueCm;
-        }
-        smoothedLevelDepthCm += LEVEL_DEPTH_EMA_ALPHA * (rawValueCm - smoothedLevelDepthCm);
-        return smoothedLevelDepthCm;
-    }
-
-    private void applyGaugeUnitToViews() {
-        float range = gaugeUnitConfig.rangeFor(currentGaugeUnit);
-        if (leftActivityGauge != null) {
-            leftActivityGauge.setRangeMax(range);
-            leftActivityGauge.setValue(0f);
-        }
-        if (rightActivityGauge != null) {
-            rightActivityGauge.setRangeMax(range);
-            rightActivityGauge.setValue(0f);
-        }
-        if (leftSlopeGauge != null) {
-            leftSlopeGauge.setRangeMax(range);
-            leftSlopeGauge.setValue(0f);
-        }
-        if (rightSlopeGauge != null) {
-            rightSlopeGauge.setRangeMax(range);
-            rightSlopeGauge.setValue(0f);
-        }
-    }
-
-    private void setGaugeUnit(GaugeUnit unit) {
-        if (unit == null || unit == currentGaugeUnit) {
-            return;
-        }
-        currentGaugeUnit = unit;
-        applyGaugeUnitToViews();
-    }
-
-    private void applySpeedIndicators(float valueCm) {
-        int dir;
-        if (valueCm > GAUGE_DIR_THRESHOLD_CM) {
-            dir = SpeedDirectionIndicatorView.DIRECTION_DOWN_HIGHLIGHT;
-        } else if (valueCm <= -GAUGE_DIR_THRESHOLD_CM) {
-            dir = SpeedDirectionIndicatorView.DIRECTION_UP_HIGHLIGHT;
-        } else {
-            dir = SpeedDirectionIndicatorView.DIRECTION_NEUTRAL;
-        }
-        float mag = Math.abs(valueCm);
-        if (leftSpeedIndicator != null) {
-            leftSpeedIndicator.setSpeed(mag);
-            leftSpeedIndicator.setDirection(dir);
-        }
-        if (rightSpeedIndicator != null) {
-            rightSpeedIndicator.setSpeed(mag);
-            rightSpeedIndicator.setDirection(dir);
-        }
+    private static boolean isFinite(float value) {
+        return !Float.isNaN(value) && !Float.isInfinite(value);
     }
 
     private static void setVisible(View view, boolean visible) {
@@ -548,8 +198,10 @@ public final class LevelTaskGuidanceController {
         if (!(layoutParams instanceof ViewGroup.MarginLayoutParams)) {
             return;
         }
-        ViewGroup.MarginLayoutParams marginLayoutParams = (ViewGroup.MarginLayoutParams) layoutParams;
-        int startMarginPx = Math.round(startMarginDp * view.getResources().getDisplayMetrics().density);
+        ViewGroup.MarginLayoutParams marginLayoutParams =
+                (ViewGroup.MarginLayoutParams) layoutParams;
+        int startMarginPx = Math.round(
+                startMarginDp * view.getResources().getDisplayMetrics().density);
         if (marginLayoutParams.getMarginStart() == startMarginPx) {
             return;
         }
@@ -565,8 +217,10 @@ public final class LevelTaskGuidanceController {
         if (!(layoutParams instanceof ViewGroup.MarginLayoutParams)) {
             return;
         }
-        ViewGroup.MarginLayoutParams marginLayoutParams = (ViewGroup.MarginLayoutParams) layoutParams;
-        int endMarginPx = Math.round(endMarginDp * view.getResources().getDisplayMetrics().density);
+        ViewGroup.MarginLayoutParams marginLayoutParams =
+                (ViewGroup.MarginLayoutParams) layoutParams;
+        int endMarginPx = Math.round(
+                endMarginDp * view.getResources().getDisplayMetrics().density);
         if (marginLayoutParams.getMarginEnd() == endMarginPx) {
             return;
         }

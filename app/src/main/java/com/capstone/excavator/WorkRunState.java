@@ -64,6 +64,7 @@ public final class WorkRunState {
         }
     }
 
+
     public void addListener(@NonNull OnStateChangeListener listener) {
         if (!listeners.contains(listener)) {
             listeners.add(listener);

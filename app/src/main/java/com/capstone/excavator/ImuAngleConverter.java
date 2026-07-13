@@ -87,49 +87,35 @@ public final class ImuAngleConverter {
         return new Config();
     }
 
+    /**
+     * 将 UDP 中的原始串联关节角转换为统一关节角。
+     * 大臂以 0° 为参考，小臂以 180° 为参考且跨 ±180°，铲斗以 90° 为参考。
+     */
     public static RelativeAngles toRelativeAngles(
-            float boomAbsDeg,
-            float stickAbsDeg,
-            float bucketLinkAbsDeg,
+            float rawBoomDeg,
+            float rawStickDeg,
+            float rawBucketDeg,
             Config config) {
-        return toRelativeAngles(boomAbsDeg, stickAbsDeg, bucketLinkAbsDeg, 0f, 0f, config);
+        return toRelativeAngles(rawBoomDeg, rawStickDeg, rawBucketDeg, 0f, 0f, config);
     }
 
+    /**
+     * {@code cabinPitchDeg/cabinRollDeg} 属于驾驶室姿态，不属于关节角；保留参数以保持
+     * 既有调用兼容，三维坐标解算时由运动学层使用。
+     */
     public static RelativeAngles toRelativeAngles(
-            float boomAbsDeg,
-            float stickAbsDeg,
-            float bucketLinkAbsDeg,
+            float rawBoomDeg,
+            float rawStickDeg,
+            float rawBucketDeg,
             float cabinPitchDeg,
             float cabinRollDeg,
             Config config) {
         Config cfg = (config != null) ? config : new Config();
-
-        double cabinPitchRad = degToRad(cabinPitchDeg);
-
-        double boomAbsRad = degToRad(boomAbsDeg + cfg.imuOffsets.boomImuOffsetDeg);
-        double stickAbsRad = degToRad(stickAbsDeg + cfg.imuOffsets.stickImuOffsetDeg);
-        double bucketLinkAbsRad = degToRad(bucketLinkAbsDeg + cfg.imuOffsets.bucketImuOffsetDeg);
-
-        // // Relative joint angles (radians).
-        double boomRelRad = normalizeAngleRad(boomAbsRad - cabinPitchRad);
-        double stickRelRad = normalizeAngleRad(stickAbsRad - boomAbsRad);
-        double bucketLinkRelRad = normalizeAngleRad(bucketLinkAbsRad - stickAbsRad);
-        // 不用做相对角度，每次的位置是自己的坐标系
-        // double boomRelRad = normalizeAngleRad(boomAbsRad);
-        // double stickRelRad = normalizeAngleRad(stickAbsRad);
-        // double bucketLinkRelRad = normalizeAngleRad(bucketLinkAbsRad);
-
-        double bucketRelRad = computeBucketAngleRad(bucketLinkAbsRad, stickAbsRad, cfg);
-        if (Double.isNaN(bucketRelRad)) {
-            bucketRelRad = bucketLinkRelRad;
-        } else {
-            bucketRelRad = normalizeAngleRad(bucketRelRad);
-        }
-
         return new RelativeAngles(
-                (float) Math.toDegrees(boomRelRad),
-                (float) Math.toDegrees(stickRelRad),
-                (float) Math.toDegrees(bucketRelRad)
+                rawBoomDeg + (float) cfg.imuOffsets.boomImuOffsetDeg,
+                (float) ArmForwardKinematics.wrap180(
+                        rawStickDeg - 180.0 + cfg.imuOffsets.stickImuOffsetDeg),
+                rawBucketDeg - 90.0f + (float) cfg.imuOffsets.bucketImuOffsetDeg
         );
     }
 

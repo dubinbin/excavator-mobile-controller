@@ -37,6 +37,7 @@ public class SettingsActivity extends ScaledAppCompatActivity {
     private static final String MODIFY_SYSYEM_BRIGHT_EVENT = "MODIFIY_BRIGHT_IMMEDIATELY";
     private static final String PREFS_GENERAL_UI = "general_ui_prefs";
     private static final String KEY_BRIGHTNESS_PERCENT = "brightness_percent";
+    private static final String NATIVE_EVENT_CURRENT_STATUS = "GET_CURRENT_STATUS";
 
     public static final String EXTRA_INITIAL_PAGE = "initial_page";
     public static final int PAGE_GENERAL = 3;
@@ -44,6 +45,8 @@ public class SettingsActivity extends ScaledAppCompatActivity {
     private ExcavatorWebAppView settingView;
     private Handler mainHandler;
     private long createStartedAtMs;
+    private final GlobalStatus.OnMotionModeChangeListener motionModeChangeListener =
+            motionMode -> runOnUiThread(this::sendCurrentStatusMessageToWebview);
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -68,6 +71,7 @@ public class SettingsActivity extends ScaledAppCompatActivity {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
         ));
+        GlobalStatus.getInstance().addMotionModeChangeListener(motionModeChangeListener);
         if (reusedWarmedView) {
             settingView.loadRoute(initialRoute);
         }
@@ -107,6 +111,7 @@ public class SettingsActivity extends ScaledAppCompatActivity {
 
     @Override
     protected void onDestroy() {
+        GlobalStatus.getInstance().removeMotionModeChangeListener(motionModeChangeListener);
         ExcavatorWebAppBridge.setMessageListener(null);
         settingView = null;
         super.onDestroy();
@@ -120,6 +125,7 @@ public class SettingsActivity extends ScaledAppCompatActivity {
             Log.i(TAG, "web settings ready after "
                     + (SystemClock.elapsedRealtime() - createStartedAtMs) + " ms");
             sendJoystickMappingMessage();
+            sendCurrentStatusMessageToWebview();
         } else if (WEB_EVENT_JOYSTICK_MAPPING_SAVED.equals(type)) {
             onWebAppJoystickMappingSaved(message);
         } else if (SAVE_CONFIG_FROM_WEBVIEW.equals(type)) {
@@ -128,6 +134,20 @@ public class SettingsActivity extends ScaledAppCompatActivity {
             onWebAppModifyBrightnessImmediately(message);
         } else if (NATIVE_EVENT_SAVED_CONFIG_SIGNAL.equals(type)) {
             sendSavedConfigMessage();
+        }
+    }
+
+    private void sendCurrentStatusMessageToWebview() {
+        if (settingView == null) {
+            return;
+        }
+        try {
+            JSONObject message = new JSONObject();
+            message.put("type", NATIVE_EVENT_CURRENT_STATUS);
+            message.put("payload", GlobalStatus.getInstance().getMotionMode());
+            settingView.sendMessageToWeb(message.toString());
+        } catch (JSONException e) {
+            Log.w(TAG, "build current status message failed", e);
         }
     }
 

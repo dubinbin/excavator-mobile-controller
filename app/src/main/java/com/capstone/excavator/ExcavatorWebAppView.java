@@ -22,7 +22,7 @@ public class ExcavatorWebAppView extends ExcavatorPostureView {
             "#/settings/common_setting"
     };
 
-//    private static final String WEB_APP_BASE_URL = "http://192.168.20.147:5173/";
+//    private static final String WEB_APP_BASE_URL = "http://192.168.194.247:5173/";
     private static final String WEB_APP_BASE_URL = "https://appassets.androidplatform.net/assets/web/excavator-web-app/index.html";
     private static final String DEFAULT_ROUTE = "";
     private static String nextInitialRoute = DEFAULT_ROUTE;

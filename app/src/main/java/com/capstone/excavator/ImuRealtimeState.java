@@ -72,15 +72,18 @@ public final class ImuRealtimeState {
         if (p.boomLength <= 0 || p.stickLength <= 0 || p.bucketLength <= 0) {
             return null;
         }
-        double boomAbsDeg = boomAngleDeg + p.boomImuOffsetDeg;
-        double stickAbsDeg = stickAngleDeg + p.stickImuOffsetDeg;
-        double bucketAbsDeg = bucketAngleDeg + p.bucketImuOffsetDeg;
-        return ArmForwardKinematics.bucketTipZ(
-                boomAbsDeg,
-                stickAbsDeg,
-                bucketAbsDeg,
+        ArmForwardKinematics.Solution solution = ArmForwardKinematics.solveRelativeAngles(
+                cabinPitchDeg,
+                boomAngleDeg,
+                stickAngleDeg,
+                bucketAngleDeg,
+                p.boomImuOffsetDeg,
+                p.stickImuOffsetDeg,
+                p.bucketImuOffsetDeg,
+                p.bucketAngleOffsetDeg,
                 ImuPreferences.lengthMmToMeters(p.boomLength),
                 ImuPreferences.lengthMmToMeters(p.stickLength),
                 ImuPreferences.lengthMmToMeters(p.bucketLength));
+        return solution.tip.z;
     }
 }

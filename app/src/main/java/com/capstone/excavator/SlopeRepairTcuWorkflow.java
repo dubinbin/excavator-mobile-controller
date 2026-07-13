@@ -10,6 +10,8 @@ public final class SlopeRepairTcuWorkflow implements TcuLinkHub.BusinessFrameLis
 
     private static final String TAG = "SlopeRepairWorkflow";
     private static final long REQUEST_TIMEOUT_MS = 8000L;
+    public static final int TYPE_TOP_LINE = 0;
+    public static final int TYPE_BOTTOM_LINE = 1;
 
     public enum Phase {
         IDLE,
@@ -30,17 +32,42 @@ public final class SlopeRepairTcuWorkflow implements TcuLinkHub.BusinessFrameLis
         void onSurveyResult(double heightM, double lat, double lon);
     }
 
-    public interface SurveyStoredListener {
-        void onSurveyStored(int pointId, double heightM, double lat, double lon);
+    /** Web 已校验的修坡设计参数；帧编码由 workflow 负责。 */
+    public static final class Params {
+        final int repairType;
+        final double aLat, aLon, aHeightM;
+        final double bLat, bLon, bHeightM;
+        final double cLat, cLon, cHeightM;
+        final double slopeRatio, verticalHeightM, horizontalDistanceM, abDistanceM, abLiftM;
+
+        public Params(int repairType, double aLat, double aLon, double aHeightM,
+                      double bLat, double bLon, double bHeightM,
+                      double cLat, double cLon, double cHeightM, double slopeRatio,
+                      double verticalHeightM, double horizontalDistanceM,
+                      double abDistanceM, double abLiftM) {
+            if (repairType != TYPE_TOP_LINE && repairType != TYPE_BOTTOM_LINE
+                    || !areFinite(aLat, aLon, aHeightM, bLat, bLon, bHeightM,
+                    cLat, cLon, cHeightM, slopeRatio, verticalHeightM,
+                    horizontalDistanceM, abDistanceM, abLiftM)) {
+                throw new IllegalArgumentException("修坡参数无效");
+            }
+            this.repairType = repairType;
+            this.aLat = aLat; this.aLon = aLon; this.aHeightM = aHeightM;
+            this.bLat = bLat; this.bLon = bLon; this.bHeightM = bHeightM;
+            this.cLat = cLat; this.cLon = cLon; this.cHeightM = cHeightM;
+            this.slopeRatio = slopeRatio;
+            this.verticalHeightM = verticalHeightM;
+            this.horizontalDistanceM = horizontalDistanceM;
+            this.abDistanceM = abDistanceM;
+            this.abLiftM = abLiftM;
+        }
     }
 
     private static final SlopeRepairTcuWorkflow INSTANCE = new SlopeRepairTcuWorkflow();
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
-    @Nullable
-    private static volatile SurveyStoredListener surveyStoredListener;
-
     private volatile Phase phase = Phase.IDLE;
+    private int surveyedPointsMask;
     private int pendingExpectAck = -1;
     private int pendingSurveyPointId = -1;
     @Nullable
@@ -56,10 +83,6 @@ public final class SlopeRepairTcuWorkflow implements TcuLinkHub.BusinessFrameLis
 
     public static SlopeRepairTcuWorkflow getInstance() {
         return INSTANCE;
-    }
-
-    public static void setSurveyStoredListener(@Nullable SurveyStoredListener listener) {
-        surveyStoredListener = listener;
     }
 
     public Phase getPhase() {
@@ -95,30 +118,27 @@ public final class SlopeRepairTcuWorkflow implements TcuLinkHub.BusinessFrameLis
                 callback);
     }
 
-    public void submitSlopeParams(StepCallback callback) {
+    /** 下发修坡参数（0x30）。 */
+    public void submitSlopeParams(Params params, StepCallback callback) {
         if (!ensureLink(callback)) return;
-        if (!SlopeRepairTaskState.canSubmitSlopeParams()) {
-            fail(callback, "请完成 A/B/C 点与坡面参数");
+        if ((surveyedPointsMask & requiredSurveyMask()) != requiredSurveyMask()) {
+            fail(callback, "请先完成 A/B/C 测点");
             return;
         }
-        SlopeRepairTaskState.PrimePoint a = SlopeRepairTaskState.computePrimeA();
-        SlopeRepairTaskState.PrimePoint b = SlopeRepairTaskState.computePrimeB();
-        SlopeRepairTaskState.PrimePoint c = SlopeRepairTaskState.computePrimeC();
-        if (a == null || b == null || c == null) {
-            fail(callback, "无法计算 A'/B'/C' 建模点");
+        if (params == null) {
+            fail(callback, "修坡参数无效");
             return;
         }
-        int slopePermille = (int) Math.round(parseMetersOrZero(SlopeRepairTaskState.getSlopeRatio()) * 1000.0);
         byte[] frame = TcuBusinessCodec.buildSlopeParams(
-                SlopeRepairTaskState.getRepairType(),
-                a.lat, a.lon, TcuBusinessCodec.metersToTenthCm(a.heightM),
-                b.lat, b.lon, TcuBusinessCodec.metersToTenthCm(b.heightM),
-                c.lat, c.lon, TcuBusinessCodec.metersToTenthCm(c.heightM),
-                slopePermille,
-                TcuBusinessCodec.metersToTenthCm(parseMetersOrZero(SlopeRepairTaskState.getVerticalHeight())),
-                TcuBusinessCodec.metersToTenthCm(parseMetersOrZero(SlopeRepairTaskState.getHorizontalDistance())),
-                TcuBusinessCodec.metersToTenthCm(parseMetersOrZero(SlopeRepairTaskState.getAbDistance())),
-                TcuBusinessCodec.metersToTenthCm(parseMetersOrZero(SlopeRepairTaskState.getAbLift())));
+                params.repairType,
+                params.aLat, params.aLon, TcuBusinessCodec.metersToTenthCm(params.aHeightM),
+                params.bLat, params.bLon, TcuBusinessCodec.metersToTenthCm(params.bHeightM),
+                params.cLat, params.cLon, TcuBusinessCodec.metersToTenthCm(params.cHeightM),
+                (int) Math.round(params.slopeRatio * 1000.0),
+                TcuBusinessCodec.metersToTenthCm(params.verticalHeightM),
+                TcuBusinessCodec.metersToTenthCm(params.horizontalDistanceM),
+                TcuBusinessCodec.metersToTenthCm(params.abDistanceM),
+                TcuBusinessCodec.metersToTenthCm(params.abLiftM));
         sendAndWait(TcuBusinessCodec.MSG_SLOPE_PARAMS_ACK, frame, callback);
     }
 
@@ -163,7 +183,7 @@ public final class SlopeRepairTcuWorkflow implements TcuLinkHub.BusinessFrameLis
     public void resetLocal() {
         clearPending();
         phase = Phase.IDLE;
-        SlopeRepairTaskState.clearTcuSession();
+        surveyedPointsMask = 0;
     }
 
     public void cancelPending() {
@@ -224,7 +244,7 @@ public final class SlopeRepairTcuWorkflow implements TcuLinkHub.BusinessFrameLis
         double lat = TcuBusinessCodec.parseInt40LatLon(data, 8);
         double lon = TcuBusinessCodec.parseInt40LatLon(data, 13);
         double heightM = TcuBusinessCodec.tenthCmToMeters(heightTenthCm);
-        SlopeRepairTaskState.updateSurvey(expectedPoint, heightTenthCm, lat, lon);
+        surveyedPointsMask |= 1 << expectedPoint;
         if (expectedPoint == TcuBusinessCodec.POINT_A) {
             phase = Phase.SURVEY_A_DONE;
         } else if (expectedPoint == TcuBusinessCodec.POINT_B) {
@@ -233,16 +253,8 @@ public final class SlopeRepairTcuWorkflow implements TcuLinkHub.BusinessFrameLis
             phase = Phase.SURVEY_C_DONE;
         }
         pendingSurveyPointId = -1;
-        notifySurveyStored(expectedPoint, heightM, lat, lon);
         succeedPendingSurvey(heightM, lat, lon);
         return true;
-    }
-
-    private void notifySurveyStored(int pointId, double heightM, double lat, double lon) {
-        SurveyStoredListener listener = surveyStoredListener;
-        if (listener != null) {
-            mainHandler.post(() -> listener.onSurveyStored(pointId, heightM, lat, lon));
-        }
     }
 
     private boolean handleSlopeParamsAck(byte[] data) {
@@ -253,7 +265,6 @@ public final class SlopeRepairTcuWorkflow implements TcuLinkHub.BusinessFrameLis
             failPending(TcuBusinessCodec.resultMessage(result));
             return true;
         }
-        SlopeRepairTaskState.setTcuParamsAccepted(true);
         phase = Phase.PARAMS_ACCEPTED;
         succeedPending();
         return true;
@@ -269,7 +280,6 @@ public final class SlopeRepairTcuWorkflow implements TcuLinkHub.BusinessFrameLis
             failPending("任务未激活: " + TcuBusinessCodec.resultMessage(result));
             return true;
         }
-        SlopeRepairTaskState.setTcuTaskActive(true);
         phase = Phase.TASK_ACTIVE;
         succeedPending();
         return true;
@@ -321,6 +331,7 @@ public final class SlopeRepairTcuWorkflow implements TcuLinkHub.BusinessFrameLis
         clearPendingTimeout();
         pendingCallback = null;
         pendingSurveyCallback = null;
+        pendingSurveyPointId = -1;
     }
 
     private void clearPendingTimeout() {
@@ -338,14 +349,24 @@ public final class SlopeRepairTcuWorkflow implements TcuLinkHub.BusinessFrameLis
     }
 
     private static int normalizePointMode(int pointMode) {
-        return pointMode < SlopeRepairTaskState.REF_LEFT || pointMode > SlopeRepairTaskState.REF_RIGHT
-                ? SlopeRepairTaskState.REF_MIDDLE
+        return pointMode < 0 || pointMode > 2
+                ? 1
                 : pointMode;
     }
 
-    private static double parseMetersOrZero(String text) {
-        Double v = SlopeRepairTaskState.parseMeters(text);
-        return v == null || Double.isNaN(v) ? 0.0 : v;
+    private static int requiredSurveyMask() {
+        return (1 << TcuBusinessCodec.POINT_A)
+                | (1 << TcuBusinessCodec.POINT_B)
+                | (1 << TcuBusinessCodec.POINT_C);
+    }
+
+    private static boolean areFinite(double... values) {
+        for (double value : values) {
+            if (!Double.isFinite(value)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private void succeedPending() {

@@ -1,235 +1,84 @@
 package com.capstone.excavator;
 
-import java.util.Locale;
-
+/**
+ * 找平任务在原生层需要保留的进程内全局数据。
+ *
+ * <p>任务参数使用不可变快照整体替换，保证其他页面不会读到只更新了一半的数据。</p>
+ */
 public final class LevelTaskState {
 
     public static final int REF_LEFT = 0;
     public static final int REF_MIDDLE = 1;
     public static final int REF_RIGHT = 2;
 
-    private static volatile int referencePoint = REF_MIDDLE;
-    private static volatile boolean heightMode = true;
-    private static volatile String targetHeight = "";
-    private static volatile String fillCut = "";
-    private static volatile String targetLon = "";
-    private static volatile String targetLat = "";
-    private static volatile String targetZ = "";
+    /** WebView 提交的找平任务参数快照，长度和高程单位均为米。 */
+    public static final class TaskParameters {
+        public final int referencePoint;
+        public final boolean heightMode;
+        public final double currentReferencePointM;
+        public final double targetAltitudeM;
+        public final double digSizeM;
+        public final String currentLongitudeAndLatitude;
+        public final double targetLongitude;
+        public final double targetLatitude;
 
-    private static volatile double targetHeightM = Double.NaN;
-    private static volatile double fillCutM = Double.NaN;
-    private static volatile double targetZM = Double.NaN;
-    private static volatile double surveyTipZLocalM = Double.NaN;
-    private static volatile double guidanceDesignZLocalM = Double.NaN;
+        public TaskParameters(
+                int referencePoint,
+                boolean heightMode,
+                double currentReferencePointM,
+                double targetAltitudeM,
+                double digSizeM,
+                String currentLongitudeAndLatitude,
+                double targetLongitude,
+                double targetLatitude) {
+            if (!Double.isFinite(targetAltitudeM)) {
+                throw new IllegalArgumentException("目标高度无效");
+            }
+            if (!Double.isFinite(digSizeM)) {
+                throw new IllegalArgumentException("填挖量无效");
+            }
+            this.referencePoint = normalizeReferencePoint(referencePoint);
+            this.heightMode = heightMode;
+            this.currentReferencePointM = currentReferencePointM;
+            this.targetAltitudeM = targetAltitudeM;
+            this.digSizeM = digSizeM;
+            this.currentLongitudeAndLatitude = currentLongitudeAndLatitude == null
+                    ? ""
+                    : currentLongitudeAndLatitude.trim();
+            this.targetLongitude = targetLongitude;
+            this.targetLatitude = targetLatitude;
+        }
+    }
 
-    // ── TCU 找平会话（0x90 / 0x91 / 0xC0）────────────────────────────
+    private static volatile TaskParameters taskParameters;
+
+    /** TCU 找平会话数据。 */
     private static volatile int surveyHeightTenthCm = Integer.MIN_VALUE;
-    private static volatile double surveyLat = Double.NaN;
-    private static volatile double surveyLon = Double.NaN;
-    private static volatile int pendingTargetHeightTenthCm = Integer.MIN_VALUE;
     private static volatile int acceptedTargetHeightTenthCm = Integer.MIN_VALUE;
-    private static volatile boolean tcuTaskActive = false;
 
-    private LevelTaskState() {
+    private LevelTaskState() {}
+
+    public static void update(TaskParameters parameters) {
+        if (parameters == null) {
+            throw new IllegalArgumentException("找平任务参数缺失");
+        }
+        taskParameters = parameters;
     }
 
-    public static void update(int ref, boolean isHeightMode, String height, String fill,
-                              String lon, String lat, String z) {
-        referencePoint = normalizeRef(ref);
-        heightMode = isHeightMode;
-        targetHeight = safe(height);
-        fillCut = safe(fill);
-        targetLon = safe(lon);
-        targetLat = safe(lat);
-        targetZ = safe(z);
-
-        targetHeightM = parseMeters(targetHeight);
-        fillCutM = parseMeters(fillCut);
-        targetZM = parseMeters(targetZ);
+    public static boolean hasTaskParameters() {
+        return taskParameters != null;
     }
 
-    public static void updateSurveyResult(int heightTenthCm, double lat, double lon) {
+    public static TaskParameters getTaskParameters() {
+        return taskParameters;
+    }
+
+    public static void updateSurveyResult(int heightTenthCm) {
         surveyHeightTenthCm = heightTenthCm;
-        surveyLat = lat;
-        surveyLon = lon;
-    }
-
-    public static void setPendingTargetHeightTenthCm(int tenthCm) {
-        pendingTargetHeightTenthCm = tenthCm;
-    }
-
-    public static void setAcceptedTargetHeightTenthCm(int tenthCm) {
-        acceptedTargetHeightTenthCm = tenthCm;
-    }
-
-    public static void setTcuTaskActive(boolean active) {
-        tcuTaskActive = active;
-    }
-
-    public static void clearTcuSession() {
-        surveyHeightTenthCm = Integer.MIN_VALUE;
-        surveyLat = Double.NaN;
-        surveyLon = Double.NaN;
-        pendingTargetHeightTenthCm = Integer.MIN_VALUE;
-        acceptedTargetHeightTenthCm = Integer.MIN_VALUE;
-        tcuTaskActive = false;
-        clearGuidanceBaseline();
-    }
-
-    public static void resetAll() {
-        referencePoint = REF_MIDDLE;
-        heightMode = true;
-        targetHeight = "";
-        fillCut = "";
-        targetLon = "";
-        targetLat = "";
-        targetZ = "";
-        targetHeightM = Double.NaN;
-        fillCutM = Double.NaN;
-        targetZM = Double.NaN;
-        clearGuidanceBaseline();
-        clearTcuSession();
-    }
-
-    public static int getReferencePoint() {
-        return referencePoint;
-    }
-
-    public static String getReferencePointText() {
-        switch (referencePoint) {
-            case REF_LEFT:
-                return "左斗尖";
-            case REF_RIGHT:
-                return "右斗尖";
-            case REF_MIDDLE:
-            default:
-                return "中斗尖";
-        }
-    }
-
-    public static boolean isHeightMode() {
-        return heightMode;
-    }
-
-    public static String getModeText() {
-        return heightMode ? "高度定点" : "坐标定点";
-    }
-
-    public static String getTargetHeight() {
-        return targetHeight;
-    }
-
-    public static String getFillCut() {
-        return fillCut;
-    }
-
-    public static String getTargetLon() {
-        return targetLon;
-    }
-
-    public static String getTargetLat() {
-        return targetLat;
-    }
-
-    public static String getTargetZ() {
-        return targetZ;
-    }
-
-    public static double getTargetHeightM() {
-        return targetHeightM;
-    }
-
-    public static double getFillCutM() {
-        return fillCutM;
-    }
-
-    /** 坐标定点：用户输入的设计高程（米），对应 tvCoordZ。 */
-    public static double getTargetZM() {
-        return targetZM;
-    }
-
-    public static void setSurveyTipZLocalM(double zLocalM) {
-        surveyTipZLocalM = zLocalM;
-    }
-
-    public static boolean hasSurveyTipZLocal() {
-        return !Double.isNaN(surveyTipZLocalM);
-    }
-
-    public static double getSurveyTipZLocalM() {
-        return surveyTipZLocalM;
-    }
-
-    public static void setGuidanceDesignZLocalM(double zLocalM) {
-        guidanceDesignZLocalM = zLocalM;
-    }
-
-    public static boolean hasGuidanceDesignZLocal() {
-        return !Double.isNaN(guidanceDesignZLocalM);
-    }
-
-    public static double getGuidanceDesignZLocalM() {
-        return guidanceDesignZLocalM;
-    }
-
-    public static void clearGuidanceBaseline() {
-        surveyTipZLocalM = Double.NaN;
-        guidanceDesignZLocalM = Double.NaN;
-    }
-
-    /** @deprecated 设计高程请用 {@link #getDesignElevationM()}；TCU 偏移请用 {@link #getTargetHeightM()}（填挖量）。 */
-    public static double getReferenceSumM() {
-        return getDesignElevationM();
-    }
-
-    /** 高度定点：至少已填「填挖量」且已完成测点；设计高程由 UI 自动 = 测量值 + 填挖量。 */
-    public static boolean hasNumericValues() {
-        return heightMode && !Double.isNaN(targetHeightM) && hasSurveyHeight();
-    }
-
-    /** 坐标定点：用户已填目标经度、纬度、设计高程（非默认占位 0）。 */
-    public static boolean hasCoordNumericValues() {
-        if (heightMode) {
-            return false;
-        }
-        return isFilledNumeric(targetLon)
-                && isFilledNumeric(targetLat)
-                && isFilledNumeric(targetZ);
-    }
-
-    private static boolean isFilledNumeric(String value) {
-        if (!isUserEntered(value)) {
-            return false;
-        }
-        return !Double.isNaN(parseMeters(value));
-    }
-
-    private static boolean isUserEntered(String value) {
-        if (value == null) {
-            return false;
-        }
-        String s = value.trim();
-        return !s.isEmpty() && !"--".equals(s) && !"0".equals(s);
-    }
-
-    public static boolean canProceedToPrecheck() {
-        return hasNumericValues() || hasCoordNumericValues();
-    }
-
-    /** 设计高程（米）= 填挖量 + 测量值，与 UI tvFillCut 一致。 */
-    public static double getDesignElevationM() {
-        if (Double.isNaN(targetHeightM) || !hasSurveyHeight()) {
-            return Double.NaN;
-        }
-        return getSurveyHeightM() + targetHeightM;
     }
 
     public static boolean hasSurveyHeight() {
         return surveyHeightTenthCm != Integer.MIN_VALUE;
-    }
-
-    public static int getSurveyHeightTenthCm() {
-        return surveyHeightTenthCm;
     }
 
     public static double getSurveyHeightM() {
@@ -238,71 +87,36 @@ public final class LevelTaskState {
                 : Double.NaN;
     }
 
-    public static double getSurveyLat() {
-        return surveyLat;
-    }
-
-    public static double getSurveyLon() {
-        return surveyLon;
+    public static void setAcceptedTargetHeightTenthCm(int tenthCm) {
+        acceptedTargetHeightTenthCm = tenthCm;
     }
 
     public static boolean hasAcceptedTargetHeight() {
         return acceptedTargetHeightTenthCm != Integer.MIN_VALUE;
     }
 
-    /** TCU 0x91 确认的设计面高度（米）；无则 NaN。 */
     public static double getAcceptedTargetHeightM() {
         return hasAcceptedTargetHeight()
                 ? TcuBusinessCodec.tenthCmToMeters(acceptedTargetHeightTenthCm)
                 : Double.NaN;
     }
 
-    public static String getAcceptedTargetHeightText() {
-        if (!hasAcceptedTargetHeight()) {
-            return "--";
-        }
-        return String.format(Locale.US, "%.3f", getAcceptedTargetHeightM());
+    /** 仅清理 TCU 会话，保留已经解析的任务参数。 */
+    public static void clearTcuSession() {
+        surveyHeightTenthCm = Integer.MIN_VALUE;
+        acceptedTargetHeightTenthCm = Integer.MIN_VALUE;
     }
 
-    /**
-     * 预检/作业展示用设计高程文案。
-     * 高度定点：tvFillCut（测量值+填挖量）；坐标定点：tvCoordZ；已下发 0x11 则用 TCU 确认值。
-     */
-    public static String getDesignElevationDisplayText() {
-        if (hasAcceptedTargetHeight()) {
-            return getAcceptedTargetHeightText();
-        }
-        if (heightMode) {
-            String v = getFillCut();
-            return v == null || v.trim().isEmpty() ? "--" : v.trim();
-        }
-        String v = getTargetZ();
-        return v == null || v.trim().isEmpty() ? "--" : v.trim();
+    /** 任务结束时清理任务参数和 TCU 会话。 */
+    public static void resetAll() {
+        taskParameters = null;
+        clearTcuSession();
     }
 
-    public static boolean isTcuTaskActive() {
-        return tcuTaskActive;
-    }
-
-    private static int normalizeRef(int ref) {
-        if (ref < REF_LEFT || ref > REF_RIGHT) {
+    private static int normalizeReferencePoint(int referencePoint) {
+        if (referencePoint < REF_LEFT || referencePoint > REF_RIGHT) {
             return REF_MIDDLE;
         }
-        return ref;
-    }
-
-    private static String safe(String value) {
-        return value == null ? "" : value.trim();
-    }
-
-    private static double parseMeters(String value) {
-        if (value == null) return Double.NaN;
-        String s = value.trim().replace('−', '-');
-        if (s.isEmpty() || s.equals("--")) return Double.NaN;
-        try {
-            return Double.parseDouble(s);
-        } catch (NumberFormatException e) {
-            return Double.NaN;
-        }
+        return referencePoint;
     }
 }
