@@ -52,7 +52,7 @@ public final class LevelTaskState {
 
     private static volatile TaskParameters taskParameters;
 
-    /** TCU 找平会话数据。 */
+    /** TCU 找平会话数据，不属于 Web 参数，但 workflow 需要跨应答保存。 */
     private static volatile int surveyHeightTenthCm = Integer.MIN_VALUE;
     private static volatile int acceptedTargetHeightTenthCm = Integer.MIN_VALUE;
 
@@ -101,7 +101,7 @@ public final class LevelTaskState {
                 : Double.NaN;
     }
 
-    /** 仅清理 TCU 会话，保留已经解析的任务参数。 */
+    /** 仅清理 TCU 会话，保留 Web 已提交的任务参数。 */
     public static void clearTcuSession() {
         surveyHeightTenthCm = Integer.MIN_VALUE;
         acceptedTargetHeightTenthCm = Integer.MIN_VALUE;

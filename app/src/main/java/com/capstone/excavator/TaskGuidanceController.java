@@ -1,23 +1,11 @@
 package com.capstone.excavator;
 
 import android.app.Activity;
-import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
 
-import java.util.Random;
-
-/**
- * 找平 / 挖沟作业引导 UI 控制器。
- *
- * <p>本类只负责把外部已经计算好的左右偏离量显示到 View，不读取任务状态、TCU 或 IMU
- * 数据，也不负责填挖量、斗尖位置、限幅或平滑计算。</p>
- *
- * <p>偏离量单位统一为厘米：正值表示偏高（需要向下），负值表示偏低（需要向上）。</p>
- */
-public final class LevelTaskGuidanceController {
-
-    private static final String TAG = "LevelGuidanceUi";
+/** 管理找平/挖沟光谱竖条、修坡垂距条和速度方向卡三组相互独立的引导 UI。 */
+public final class TaskGuidanceController {
 
     /** 每侧 19 格，每格默认表示 5 cm。 */
     private static final float DEFAULT_ACTIVITY_GAUGE_RANGE_CM = 19f * 5f;
@@ -35,18 +23,26 @@ public final class LevelTaskGuidanceController {
     private VerticalSpectrumGaugeView leftActivityGauge;
     private VerticalSpectrumGaugeView rightActivityGauge;
 
+    /** 修坡使用的左右垂距条。 */
+    private SingleBarGaugeView leftSlopeGauge;
+    private SingleBarGaugeView rightSlopeGauge;
+
     /** 左右数值及方向卡。 */
     private SpeedDirectionIndicatorView leftSpeedIndicator;
     private SpeedDirectionIndicatorView rightSpeedIndicator;
 
-    private final Random mockDeviationRandom = new Random();
-
-    /**
-     * 绑定两组引导 View。在 Activity {@code setContentView} 之后调用一次。
-     */
+    /** 在 Activity {@code setContentView} 之后绑定三组引导 View。 */
     public void bind(Activity activity) {
         leftActivityGauge = activity.findViewById(R.id.leftActivityGauge);
         rightActivityGauge = activity.findViewById(R.id.rightActivityGauge);
+
+        VerticalActivityPanelView leftSlopePanel =
+                activity.findViewById(R.id.verticalActivityPanelLeft);
+        VerticalActivityPanelView rightSlopePanel =
+                activity.findViewById(R.id.verticalActivityPanelRight);
+        leftSlopeGauge = leftSlopePanel == null ? null : leftSlopePanel.getGauge();
+        rightSlopeGauge = rightSlopePanel == null ? null : rightSlopePanel.getGauge();
+
         leftSpeedIndicator = activity.findViewById(R.id.leftSpeedIndicator);
         rightSpeedIndicator = activity.findViewById(R.id.rightSpeedIndicator);
 
@@ -63,22 +59,20 @@ public final class LevelTaskGuidanceController {
     public void updateActivityGaugeDeviations(
             float leftDeviationCm,
             float rightDeviationCm) {
-        setGaugeValue(leftActivityGauge, leftDeviationCm);
-        setGaugeValue(rightActivityGauge, rightDeviationCm);
+        setActivityGaugeValue(leftActivityGauge, leftDeviationCm);
+        setActivityGaugeValue(rightActivityGauge, rightDeviationCm);
     }
 
     /**
-     * 临时模拟入口：生成两个独立随机偏离量并只更新左右光谱竖条。
+     * 只更新修坡任务左右 {@link SingleBarGaugeView}，不影响找平/挖沟竖条和速度方向卡。
      *
-     * <p>真实 TCU 填挖 / 机身偏离公式接入后，调用方应改用
-     * {@link #updateActivityGaugeDeviations(float, float)}。</p>
+     * <p>输入单位为厘米；当前默认量程来自 XML 的 {@code sbgRangeMax=10}。</p>
      */
-    public void updateMockActivityGaugeDeviations() {
-        float leftDeviationCm = nextMockDeviationCm();
-        float rightDeviationCm = nextMockDeviationCm();
-        updateActivityGaugeDeviations(leftDeviationCm, rightDeviationCm);
-        Log.d(TAG, "mock gauges: leftCm=" + leftDeviationCm
-                + ", rightCm=" + rightDeviationCm);
+    public void updateSlopeGaugeDeviations(
+            float leftDeviationCm,
+            float rightDeviationCm) {
+        setSlopeGaugeValue(leftSlopeGauge, leftDeviationCm);
+        setSlopeGaugeValue(rightSlopeGauge, rightDeviationCm);
     }
 
     /**
@@ -114,10 +108,29 @@ public final class LevelTaskGuidanceController {
         }
     }
 
+    /** 设置修坡左右垂距条的最大绝对量程。 */
+    public void setSlopeGaugeRangeCm(float maxAbsCm) {
+        if (!isFinite(maxAbsCm) || maxAbsCm <= 0f) {
+            return;
+        }
+        if (leftSlopeGauge != null) {
+            leftSlopeGauge.setRangeMax(maxAbsCm);
+        }
+        if (rightSlopeGauge != null) {
+            rightSlopeGauge.setRangeMax(maxAbsCm);
+        }
+    }
+
     /** 清空左右光谱竖条，不影响速度方向卡。 */
     public void clearActivityGauges() {
-        setGaugeValue(leftActivityGauge, 0f);
-        setGaugeValue(rightActivityGauge, 0f);
+        setActivityGaugeValue(leftActivityGauge, 0f);
+        setActivityGaugeValue(rightActivityGauge, 0f);
+    }
+
+    /** 清空修坡左右垂距条，不影响另外两组引导 View。 */
+    public void clearSlopeGauges() {
+        setSlopeGaugeValue(leftSlopeGauge, 0f);
+        setSlopeGaugeValue(rightSlopeGauge, 0f);
     }
 
     /** 清空左右速度方向卡，不影响光谱竖条。 */
@@ -126,9 +139,10 @@ public final class LevelTaskGuidanceController {
         setSpeedIndicatorValue(rightSpeedIndicator, 0f);
     }
 
-    /** 清空两组引导 View。 */
+    /** 清空三组引导 View。 */
     public void clear() {
         clearActivityGauges();
+        clearSlopeGauges();
         clearSpeedIndicators();
     }
 
@@ -143,7 +157,17 @@ public final class LevelTaskGuidanceController {
         setVisible(rightSpeedIndicator, taskActive);
     }
 
-    private static void setGaugeValue(VerticalSpectrumGaugeView gauge, float deviationCm) {
+    private static void setActivityGaugeValue(
+            VerticalSpectrumGaugeView gauge,
+            float deviationCm) {
+        if (gauge != null) {
+            gauge.setValue(sanitizeDeviation(deviationCm));
+        }
+    }
+
+    private static void setSlopeGaugeValue(
+            SingleBarGaugeView gauge,
+            float deviationCm) {
         if (gauge != null) {
             gauge.setValue(sanitizeDeviation(deviationCm));
         }
@@ -168,11 +192,6 @@ public final class LevelTaskGuidanceController {
             return SpeedDirectionIndicatorView.DIRECTION_UP_HIGHLIGHT;
         }
         return SpeedDirectionIndicatorView.DIRECTION_NEUTRAL;
-    }
-
-    private float nextMockDeviationCm() {
-        return (mockDeviationRandom.nextFloat() * 2f - 1f)
-                * DEFAULT_ACTIVITY_GAUGE_RANGE_CM;
     }
 
     /** 无效输入不保留旧 UI，统一回到零值。 */

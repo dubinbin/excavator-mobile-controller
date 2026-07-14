@@ -81,6 +81,8 @@ public final class DitchTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
     private boolean surveyACompleted;
     private boolean surveyBCompleted;
     private int pendingExpectAck = -1;
+    /** 当前等待 0x84 的 0x04 Action；其他请求为 -1。 */
+    private int pendingFeatureAction = -1;
     private int pendingSurveyPointId = -1;
     @Nullable
     private StepCallback pendingCallback;
@@ -113,6 +115,7 @@ public final class DitchTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
                 TcuBusinessCodec.buildFeatureSelect(
                         TcuBusinessCodec.FEATURE_DITCH,
                         TcuBusinessCodec.ACTION_ENTER),
+                TcuBusinessCodec.ACTION_ENTER,
                 callback);
     }
 
@@ -218,6 +221,7 @@ public final class DitchTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
                 TcuBusinessCodec.buildFeatureSelect(
                         TcuBusinessCodec.FEATURE_DITCH,
                         TcuBusinessCodec.ACTION_EXIT),
+                TcuBusinessCodec.ACTION_EXIT,
                 new StepCallback() {
                     @Override
                     public void onSuccess() {
@@ -227,7 +231,6 @@ public final class DitchTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
 
                     @Override
                     public void onError(String message) {
-                        resetLocal();
                         if (callback != null) {
                             callback.onError(message);
                         }
@@ -272,6 +275,7 @@ public final class DitchTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
         if ((data[1] & 0xFF) != TcuBusinessCodec.FEATURE_DITCH) {
             return false;
         }
+        int featureAction = pendingFeatureAction;
         clearPendingTimeout();
         int result = data[0] & 0xFF;
         int activeFeature = data[2] & 0xFF;
@@ -279,15 +283,25 @@ public final class DitchTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
             failPending(TcuBusinessCodec.resultMessage(result));
             return true;
         }
-        if (activeFeature == TcuBusinessCodec.FEATURE_DITCH) {
-            phase = Phase.FEATURE_ACTIVE;
-            succeedPending();
-        } else if (activeFeature == TcuBusinessCodec.FEATURE_NONE) {
-            phase = Phase.IDLE;
-            succeedPending();
+        int expectedActiveFeature;
+        if (featureAction == TcuBusinessCodec.ACTION_ENTER) {
+            expectedActiveFeature = TcuBusinessCodec.FEATURE_DITCH;
+        } else if (featureAction == TcuBusinessCodec.ACTION_EXIT) {
+            expectedActiveFeature = TcuBusinessCodec.FEATURE_NONE;
         } else {
-            failPending("ActiveFeature 异常: 0x" + Integer.toHexString(activeFeature));
+            failPending("功能选择请求 Action 上下文缺失");
+            return true;
         }
+        if (activeFeature != expectedActiveFeature) {
+            failPending("功能切换未生效: Action=0x" + Integer.toHexString(featureAction)
+                    + ", 期望 ActiveFeature=0x" + Integer.toHexString(expectedActiveFeature)
+                    + ", 实际=0x" + Integer.toHexString(activeFeature));
+            return true;
+        }
+        phase = featureAction == TcuBusinessCodec.ACTION_ENTER
+                ? Phase.FEATURE_ACTIVE
+                : Phase.IDLE;
+        succeedPending();
         return true;
     }
 
@@ -366,8 +380,14 @@ public final class DitchTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
     }
 
     private void sendAndWait(int expectAckMsgId, byte[] frame, StepCallback callback) {
+        sendAndWait(expectAckMsgId, frame, -1, callback);
+    }
+
+    private void sendAndWait(
+            int expectAckMsgId, byte[] frame, int featureAction, StepCallback callback) {
         clearPending();
         pendingExpectAck = expectAckMsgId;
+        pendingFeatureAction = featureAction;
         pendingCallback = callback;
         if (!TcuLinkHub.send(frame)) {
             clearPending();
@@ -421,6 +441,7 @@ public final class DitchTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
 
     private void clearPendingTimeout() {
         pendingExpectAck = -1;
+        pendingFeatureAction = -1;
         if (pendingTimeout != null) {
             mainHandler.removeCallbacks(pendingTimeout);
             pendingTimeout = null;

@@ -305,6 +305,7 @@
 
     </eightbitlab.com.blurview.BlurView>
 
+    <!-- 所有模式都有的上下进度条 左 -->
     <com.capstone.excavator.SpeedDirectionIndicatorView
         android:id="@+id/rightSpeedIndicator"
         android:layout_width="120dp"
@@ -313,7 +314,7 @@
         android:layout_marginTop="245dp"
         android:layout_marginEnd="60.44dp"
         android:layout_marginBottom="0dp" />
-
+    <!-- 所有模式都有的上下进度条 右 -->
     <com.capstone.excavator.SpeedDirectionIndicatorView
         android:id="@+id/leftSpeedIndicator"
         android:layout_width="120dp"
@@ -359,7 +360,7 @@ mode.setOnIndexChangeListener(idx -> {
         android:layout_height="match_parent"
         android:layout_gravity="end|top" />
 
-    <!-- 垂直独立进度条（VerticalActivityPanelView），37.33×172.44dp，左侧 28.44dp 偏移，顶部 245dp -->
+    <!-- 垂直独立修坡专用进度条（VerticalActivityPanelView），37.33×172.44dp，左侧 28.44dp 偏移，顶部 245dp -->
     <com.capstone.excavator.VerticalActivityPanelView
         android:id="@+id/verticalActivityPanelLeft"
         android:layout_width="37.33dp"
@@ -369,7 +370,7 @@ mode.setOnIndexChangeListener(idx -> {
         android:layout_marginTop="245dp" />
 
 
-    <!-- 垂直独立进度条（VerticalActivityPanelView），37.33×172.44dp，左侧 28.44dp 偏移，顶部 245dp -->
+    <!-- 垂直独立修坡专用进度条（VerticalActivityPanelView），37.33×172.44dp，左侧 28.44dp 偏移，顶部 245dp -->
     <com.capstone.excavator.VerticalActivityPanelView
         android:id="@+id/verticalActivityPanelRight"
         android:layout_width="37.33dp"

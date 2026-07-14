@@ -61,8 +61,8 @@ public class MainActivity extends ScaledAppCompatActivity {
     private View rightActivityPanel;
     private View verticalActivityPanelLeft;
     private View verticalActivityPanelRight;
-    private final LevelTaskGuidanceController levelTaskGuidance =
-            new LevelTaskGuidanceController();
+    private final TaskGuidanceController TaskGuidance =
+            new TaskGuidanceController();
     private MotionModeSegmentView motionModeSegment;
     private volatile int desiredMotionModeChannelIndex = MotionModeSegmentView.INDEX_STOP;
     private volatile ControllerLocalSettings.Snapshot currentJoystickUiMappingSnapshot;
@@ -72,13 +72,27 @@ public class MainActivity extends ScaledAppCompatActivity {
     private InlineToastView inlineToast;
     private ExcavatorWebAppPreloader webAppPreloader;
 
+    /** 本地公式最终输出给 UI 的左右有符号偏离量，统一使用厘米。 */
+    private static final class GuidanceDeviationPair {
+        final float leftCm;
+        final float rightCm;
+
+        GuidanceDeviationPair(float leftCm, float rightCm) {
+            this.leftCm = leftCm;
+            this.rightCm = rightCm;
+        }
+    }
+
     private final TaskTypeState.OnTypeChangeListener taskTypeListener =
             (newType, oldType) -> runOnUiThread(() -> {
-                levelTaskGuidance.clear();
+                TaskGuidance.clear();
                 applyTaskOverlayVisibility();
             });
     private final WorkRunState.OnStateChangeListener workStateListener =
             (newState, oldState) -> runOnUiThread(this::applyTaskOverlayVisibility);
+    /** GlobalStatus 每写入一帧新 IMU 数据，就触发一次本地引导计算与 UI 分发。 */
+    private final GlobalStatus.OnImuAnglesChangeListener imuAnglesChangeListener =
+            angles -> runOnUiThread(this::refreshTaskGuidanceFromGlobalStatus);
     // 数据更新Handler
     private Handler handler;
     private Runnable updateRunnable;
@@ -158,6 +172,7 @@ public class MainActivity extends ScaledAppCompatActivity {
         super.onStart();
         TaskTypeState.getInstance().addListener(taskTypeListener);
         WorkRunState.getInstance().addListener(workStateListener);
+        GlobalStatus.getInstance().addImuAnglesChangeListener(imuAnglesChangeListener);
         applyTaskOverlayVisibility();
     }
 
@@ -165,6 +180,7 @@ public class MainActivity extends ScaledAppCompatActivity {
     protected void onStop() {
         TaskTypeState.getInstance().removeListener(taskTypeListener);
         WorkRunState.getInstance().removeListener(workStateListener);
+        GlobalStatus.getInstance().removeImuAnglesChangeListener(imuAnglesChangeListener);
         super.onStop();
     }
 
@@ -331,7 +347,7 @@ public class MainActivity extends ScaledAppCompatActivity {
     }
 
     private void configurePostureAndMapPanel() {
-        levelTaskGuidance.bind(this);
+        TaskGuidance.bind(this);
         if (motionModeSegment != null) {
             motionModeSegment.setOnIndexChangeListener(this::onMotionModeChanged);
         }
@@ -471,7 +487,7 @@ public class MainActivity extends ScaledAppCompatActivity {
         setVisible(referencePointTitleBar, ditchTask);
         setVisible(centerCapsuleSpeedDirectionContainer, ditchTask);
         setTopMarginDp(livePillBlur, ditchTask ? 85f : 55f);
-        levelTaskGuidance.applySpeedIndicatorOverlay(slopeTask, taskActive);
+        TaskGuidance.applySpeedIndicatorOverlay(slopeTask, taskActive);
 
         boolean guidanceRunning = taskActive
                 && workState == WorkRunState.State.RUNNING
@@ -479,25 +495,101 @@ public class MainActivity extends ScaledAppCompatActivity {
                 || taskType == TaskTypeState.Type.DITCH
                 || taskType == TaskTypeState.Type.SLOPE);
         if (!guidanceRunning) {
-            levelTaskGuidance.clear();
+            TaskGuidance.clear();
         } else {
-            updateMockTaskGuidanceIfNeeded();
+            // confirmTask 成功后全局任务状态已是 RUNNING；先用最新 IMU 快照刷新一次，
+            // 后续由 GlobalStatus.OnImuAnglesChangeListener 逐帧驱动。
+            refreshTaskGuidanceFromGlobalStatus();
         }
     }
 
-    /** 找平 / 挖沟偏离公式完成前，只 mock 共用的左右 VerticalSpectrumGaugeView。 */
-    private void updateMockTaskGuidanceIfNeeded() {
+    /**
+     * 三种任务统一实时路径：读取 GlobalStatus IMU 快照 → 本地公式 → 对应 Gauge + 公共方向卡。
+     */
+    private void refreshTaskGuidanceFromGlobalStatus() {
         if (WorkRunState.getInstance().getState() != WorkRunState.State.RUNNING) {
             return;
         }
+        GlobalStatus.ImuAngles imuAngles =
+                GlobalStatus.getInstance().getRunTimeImuData();
         TaskTypeState.Type taskType = TaskTypeState.getInstance().getType();
-        boolean parametersReady = (taskType == TaskTypeState.Type.LEVEL
-                && LevelTaskState.hasTaskParameters())
-                || (taskType == TaskTypeState.Type.DITCH
-                && DitchTaskState.hasTaskParameters());
-        if (parametersReady) {
-            levelTaskGuidance.updateMockActivityGaugeDeviations();
+        GuidanceDeviationPair deviations;
+        switch (taskType) {
+            case LEVEL:
+                LevelTaskState.TaskParameters levelParameters =
+                        LevelTaskState.getTaskParameters();
+                if (levelParameters == null) {
+                    return;
+                }
+                deviations = calculateLevelGuidance(levelParameters, imuAngles);
+                if (deviations != null) {
+                    applyLevelOrDitchGuidance(deviations);
+                }
+                break;
+            case DITCH:
+                DitchTaskState.TaskParameters ditchParameters =
+                        DitchTaskState.getTaskParameters();
+                if (ditchParameters == null) {
+                    return;
+                }
+                deviations = calculateDitchGuidance(ditchParameters, imuAngles);
+                if (deviations != null) {
+                    applyLevelOrDitchGuidance(deviations);
+                }
+                break;
+            case SLOPE:
+                SlopeRepairTaskState.TaskParameters slopeParameters =
+                        SlopeRepairTaskState.getTaskParameters();
+                if (slopeParameters == null) {
+                    return;
+                }
+                deviations = calculateSlopeGuidance(slopeParameters, imuAngles);
+                if (deviations != null) {
+                    applySlopeGuidance(deviations);
+                }
+                break;
+            default:
+                break;
         }
+    }
+
+    private void applyLevelOrDitchGuidance(GuidanceDeviationPair deviations) {
+        // 找平 / 挖沟：光谱竖条显示偏离，同时复用方向卡显示数值绝对值和正负方向。
+        TaskGuidance.updateActivityGaugeDeviations(deviations.leftCm, deviations.rightCm);
+        TaskGuidance.updateSpeedIndicatorDeviations(deviations.leftCm, deviations.rightCm);
+    }
+
+    private void applySlopeGuidance(GuidanceDeviationPair deviations) {
+        // 修坡：单色垂距条显示偏离，同时复用同一组方向卡。
+        TaskGuidance.updateSlopeGaugeDeviations(deviations.leftCm, deviations.rightCm);
+        TaskGuidance.updateSpeedIndicatorDeviations(deviations.leftCm, deviations.rightCm);
+    }
+
+    private GuidanceDeviationPair calculateLevelGuidance(
+            LevelTaskState.TaskParameters task,
+            GlobalStatus.ImuAngles imu) {
+        // TODO [REALTIME_GUIDANCE][LEVEL][重点]:
+        // 使用 task + imu 计算找平任务左右偏离量（cm），完成后返回：
+        // return new GuidanceDeviationPair(leftDeviationCm, rightDeviationCm);
+        return null;
+    }
+
+    private GuidanceDeviationPair calculateDitchGuidance(
+            DitchTaskState.TaskParameters task,
+            GlobalStatus.ImuAngles imu) {
+        // TODO [REALTIME_GUIDANCE][DITCH][重点]:
+        // 使用 task + imu 计算挖沟任务左右偏离量（cm），完成后返回：
+        // return new GuidanceDeviationPair(leftDeviationCm, rightDeviationCm);
+        return null;
+    }
+
+    private GuidanceDeviationPair calculateSlopeGuidance(
+            SlopeRepairTaskState.TaskParameters task,
+            GlobalStatus.ImuAngles imu) {
+        // TODO [REALTIME_GUIDANCE][SLOPE][重点]:
+        // 使用 task + imu 计算修坡任务左右垂距偏离量（cm），完成后返回：
+        // return new GuidanceDeviationPair(leftDeviationCm, rightDeviationCm);
+        return null;
     }
 
     /**
@@ -507,18 +599,29 @@ public class MainActivity extends ScaledAppCompatActivity {
     public void updateActivityGaugeDeviations(
             float leftDeviationCm,
             float rightDeviationCm) {
-        runOnUiThread(() -> levelTaskGuidance.updateActivityGaugeDeviations(
+        runOnUiThread(() -> TaskGuidance.updateActivityGaugeDeviations(
                 leftDeviationCm, rightDeviationCm));
     }
 
     /**
      * 外部计算模块调用：只更新左右数值及方向卡。
-     * 正值高亮向下，负值高亮向上，单位为厘米。
+     * 正值高亮向下，负值高亮向上，单位为厘米；不影响另外两组竖条。
      */
     public void updateSpeedIndicatorDeviations(
             float leftDeviationCm,
             float rightDeviationCm) {
-        runOnUiThread(() -> levelTaskGuidance.updateSpeedIndicatorDeviations(
+        runOnUiThread(() -> TaskGuidance.updateSpeedIndicatorDeviations(
+                leftDeviationCm, rightDeviationCm));
+    }
+
+    /**
+     * 外部计算模块调用：只更新修坡左右垂距条。
+     * 单位为厘米，正负值分别点亮零点两侧。
+     */
+    public void updateSlopeGaugeDeviations(
+            float leftDeviationCm,
+            float rightDeviationCm) {
+        runOnUiThread(() -> TaskGuidance.updateSlopeGaugeDeviations(
                 leftDeviationCm, rightDeviationCm));
     }
 
@@ -740,9 +843,6 @@ public class MainActivity extends ScaledAppCompatActivity {
         // 更新定位信息（带小幅随机波动）
         updatePositioning();
 
-        // 找平 / 挖沟真实偏离公式尚未确定，暂时每秒刷新一次左右竖条模拟值。
-        updateMockTaskGuidanceIfNeeded();
-        
         // 更新挖掘深度（带小幅随机波动）
 //        updateDigDepth();
     }

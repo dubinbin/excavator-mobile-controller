@@ -32,6 +32,8 @@ public final class SlopeRepairTaskState {
         public final double verticalHeightM;
         public final double horizontalDistanceM;
         public final double abDistanceM;
+        public final double abHeightDifferenceM;
+        public final double slopeAngle;
         public final String slopeDirection;
 
         /** TCU 需要的坡比：水平距离 / 垂直高度。 */
@@ -58,8 +60,8 @@ public final class SlopeRepairTaskState {
             if (pointA == null || pointB == null || pointC == null) {
                 throw new IllegalArgumentException("修坡 A/B/C 点缺失");
             }
-            if (!areFinite(verticalHeightM, horizontalDistanceM, abDistanceM)
-                    || verticalHeightM == 0.0) {
+            if (!areFinite(verticalHeightM, horizontalDistanceM, abDistanceM,
+                    abHeightDifferenceM, slopeRatio, slopeAngle)) {
                 throw new IllegalArgumentException("修坡尺寸参数无效");
             }
             this.repairType = repairType;
@@ -69,9 +71,11 @@ public final class SlopeRepairTaskState {
             this.verticalHeightM = verticalHeightM;
             this.horizontalDistanceM = horizontalDistanceM;
             this.abDistanceM = abDistanceM;
+            this.abHeightDifferenceM = abHeightDifferenceM;
+            this.slopeAngle = slopeAngle;
             this.slopeDirection = slopeDirection == null ? "" : slopeDirection.trim();
             this.slopeRatio = slopeRatio;
-            this.abLiftM = pointB.heightM - pointA.heightM;
+            this.abLiftM = abHeightDifferenceM;
         }
     }
 
@@ -84,6 +88,14 @@ public final class SlopeRepairTaskState {
             throw new IllegalArgumentException("修坡任务参数缺失");
         }
         taskParameters = parameters;
+    }
+
+    public static boolean hasTaskParameters() {
+        return taskParameters != null;
+    }
+
+    public static TaskParameters getTaskParameters() {
+        return taskParameters;
     }
 
     public static void resetAll() {

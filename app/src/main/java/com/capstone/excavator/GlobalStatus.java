@@ -32,12 +32,19 @@ public final class GlobalStatus {
         void onMotionModeChanged(int motionMode);
     }
 
+    /** 每次写入一帧新的 IMU 快照后触发。回调线程与数据写入线程一致。 */
+    public interface OnImuAnglesChangeListener {
+        void onImuAnglesChanged(ImuAngles angles);
+    }
+
     private static final GlobalStatus INSTANCE = new GlobalStatus();
 
     /** 当前运动模式下标：0 停止，1 底盘，2 铲斗。 */
     private volatile int motionMode = MotionModeSegmentView.INDEX_STOP;
     private volatile ImuAngles imuAngles = new ImuAngles(0f, 0f, 0f, 0f, 0f);
     private final CopyOnWriteArrayList<OnMotionModeChangeListener> motionModeListeners =
+            new CopyOnWriteArrayList<>();
+    private final CopyOnWriteArrayList<OnImuAnglesChangeListener> imuAnglesListeners =
             new CopyOnWriteArrayList<>();
 
     private GlobalStatus() {
@@ -70,12 +77,26 @@ public final class GlobalStatus {
 
     public void updateImuAngles(float boomAngle, float stickAngle, float bucketAngle,
                                 float cabinPitchAngle, float cabinRollAngle) {
-        imuAngles = new ImuAngles(
+        ImuAngles snapshot = new ImuAngles(
                 boomAngle,
                 stickAngle,
                 bucketAngle,
                 cabinPitchAngle,
                 cabinRollAngle);
+        imuAngles = snapshot;
+        for (OnImuAnglesChangeListener listener : imuAnglesListeners) {
+            listener.onImuAnglesChanged(snapshot);
+        }
+    }
+
+    public void addImuAnglesChangeListener(OnImuAnglesChangeListener listener) {
+        if (listener != null && !imuAnglesListeners.contains(listener)) {
+            imuAnglesListeners.add(listener);
+        }
+    }
+
+    public void removeImuAnglesChangeListener(OnImuAnglesChangeListener listener) {
+        imuAnglesListeners.remove(listener);
     }
 
     public ImuAngles getRunTimeImuData() {

@@ -322,7 +322,7 @@ final class WebTaskTcuController {
             public void onSuccess() {
                 // 后续改一下，这个发到前端，前端才把页面关闭
                 sendStateToWebView(TcuBusinessCodec.MSG_TASK_CONFIRM_ACK, workflow.getPhase().name());
-                activateTask(TaskTypeState.Type.LEVEL);
+                activateTaskAndStartRealtimeGuidance(TaskTypeState.Type.LEVEL);
             }
 
             @Override
@@ -352,6 +352,7 @@ final class WebTaskTcuController {
             //     "targetLatitude": "22.55", // 纬度
             //     "currentFixationMode": "COORDINATE" // 定点方式 ALTITUDE 高度， COORDINATE经纬度
             // }
+
             int referencePoint = parseReferencePoint(
                     result.optString("bucketPos", "MIDDLE"));
             boolean heightMode = !"COORDINATE".equalsIgnoreCase(
@@ -380,9 +381,8 @@ final class WebTaskTcuController {
 
             LevelTaskState.update(taskParameters);
 
-            // 临时 mock 阶段不等待尚未闭环的 TCU 0x11/0x40 流程。
-            // 本地激活后 MainActivity 才会显示左右竖条并开始生成模拟偏离量。
-            // 目标高程仍按现有 TCU 流程下发；左右机身偏离量暂由首页 mock。
+            // 参数快照保存后继续走 TCU 参数下发；0xC0 确认成功才启动首页实时引导。
+            // 左右偏离公式统一留在 MainActivity 的 REALTIME_GUIDANCE TODO 中实现。
             LevelTcuWorkflow workflow = LevelTcuWorkflow.getInstance();
             workflow.submitLevelParams(taskParameters,
                     new LevelTcuWorkflow.StepCallback() {
@@ -567,16 +567,15 @@ final class WebTaskTcuController {
     }
 
     private boolean beginStartRequest() {
-        // TODO 先暂时放行
-//         if (startRequested) {
-//             reportError("TASK_START", "任务正在提交，请勿重复操作");
-//             return false;
-//         }
-//         if (!isFeatureActive()) {
-//             reportError("TASK_START", "TCU 尚未确认进入当前功能");
-//             return false;
-//         }
-
+         if (startRequested) {
+             reportError("TASK_START", "任务正在提交，请勿重复操作");
+             return false;
+         }
+         if (!isFeatureActive()) {
+             reportError("TASK_START", "TCU 尚未确认进入当前功能");
+             return false;
+         }
+        startRequested = true;
         return true;
     }
 
@@ -600,7 +599,7 @@ final class WebTaskTcuController {
             public void onSuccess() {
                 // 后续改一下，这个发到前端，前端才把页面关闭
                 sendStateToWebView(TcuBusinessCodec.MSG_TASK_CONFIRM_ACK, workflow.getPhase().name());
-                activateTask(TaskTypeState.Type.DITCH);
+                activateTaskAndStartRealtimeGuidance(TaskTypeState.Type.DITCH);
             }
 
             @Override
@@ -618,7 +617,7 @@ final class WebTaskTcuController {
             public void onSuccess() {
                 // 后续改一下，这个发到前端，前端才把页面关闭
                 sendStateToWebView(TcuBusinessCodec.MSG_TASK_CONFIRM_ACK, workflow.getPhase().name());
-                activateTask(TaskTypeState.Type.SLOPE);
+                activateTaskAndStartRealtimeGuidance(TaskTypeState.Type.SLOPE);
             }
 
             @Override
@@ -629,7 +628,12 @@ final class WebTaskTcuController {
         });
     }
 
-    private void activateTask(TaskTypeState.Type type) {
+    /**
+     * [实时引导启动事件]
+     * confirmTaskStart 成功后发布任务类型和 RUNNING 状态，并通知 Host 返回首页。
+     * MainActivity 随后读取 GlobalStatus 最新 IMU，后续每帧 IMU 更新继续驱动本地计算。
+     */
+    private void activateTaskAndStartRealtimeGuidance(TaskTypeState.Type type) {
         taskActivated = true;
         TaskTypeState.getInstance().setType(type);
         WorkRunState.getInstance().setState(WorkRunState.State.RUNNING);
@@ -668,10 +672,6 @@ final class WebTaskTcuController {
                     .put("phase", phase);
             if (ackMsgId == TcuBusinessCodec.MSG_FEATURE_SELECT_ACK) {
                 payload.put("ActiveFeature", taskKind.featureId);
-//            } else if (ackMsgId == TcuBusinessCodec.MSG_LEVEL_PARAMS_ACK
-//                    && LevelTaskState.hasAcceptedTargetHeight()) {
-//                // TODO 实时高度信息
-//                payload.put("targetHeight", LevelTaskState.getAcceptedTargetHeightM());
             } else if (ackMsgId == TcuBusinessCodec.MSG_TASK_CONFIRM_ACK) {
                 payload.put("TaskState", 0x01);
             }

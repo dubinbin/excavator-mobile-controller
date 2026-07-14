@@ -84,18 +84,6 @@ public final class DitchTaskState {
         return taskParameters;
     }
 
-    /**
-     * 当前临时二维引导使用的沟底高程：A/B 点平均高程减去设计深度。
-     */
-    public static double getGuidanceTrenchBottomElevationM() {
-        TaskParameters parameters = taskParameters;
-        if (parameters == null) {
-            return Double.NaN;
-        }
-        return (parameters.pointA.heightM + parameters.pointB.heightM) / 2.0
-                - parameters.depthM;
-    }
-
     public static void resetAll() {
         taskParameters = null;
     }
