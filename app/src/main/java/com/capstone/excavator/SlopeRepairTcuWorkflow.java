@@ -118,13 +118,35 @@ public final class SlopeRepairTcuWorkflow implements TcuLinkHub.BusinessFrameLis
                 callback);
     }
 
-    /** 下发修坡参数（0x30）。 */
-    public void submitSlopeParams(Params params, StepCallback callback) {
-        if (!ensureLink(callback)) return;
-        if ((surveyedPointsMask & requiredSurveyMask()) != requiredSurveyMask()) {
-            fail(callback, "请先完成 A/B/C 测点");
+    /** 将全局任务快照转换为协议字段并下发修坡参数（0x30）。 */
+    public void submitSlopeParams(
+            SlopeRepairTaskState.TaskParameters taskParameters,
+            StepCallback callback) {
+        if (taskParameters == null) {
+            fail(callback, "修坡参数无效");
             return;
         }
+        submitSlopeParams(new Params(
+                taskParameters.repairType,
+                taskParameters.pointA.latitude,
+                taskParameters.pointA.longitude,
+                taskParameters.pointA.heightM,
+                taskParameters.pointB.latitude,
+                taskParameters.pointB.longitude,
+                taskParameters.pointB.heightM,
+                taskParameters.pointC.latitude,
+                taskParameters.pointC.longitude,
+                taskParameters.pointC.heightM,
+                taskParameters.slopeRatio,
+                taskParameters.verticalHeightM,
+                taskParameters.horizontalDistanceM,
+                taskParameters.abDistanceM,
+                taskParameters.abLiftM), callback);
+    }
+
+    /** 下发已经转换为协议字段的修坡参数（0x30）。 */
+    public void submitSlopeParams(Params params, StepCallback callback) {
+        if (!ensureLink(callback)) return;
         if (params == null) {
             fail(callback, "修坡参数无效");
             return;

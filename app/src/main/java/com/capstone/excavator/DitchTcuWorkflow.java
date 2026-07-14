@@ -145,6 +145,31 @@ public final class DitchTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
     }
 
     /** 下发挖沟参数（0x20）。 */
+    public void submitDitchParams(
+            DitchTaskState.TaskParameters taskParameters,
+            StepCallback callback) {
+        if (taskParameters == null) {
+            fail(callback, "挖沟参数无效");
+            return;
+        }
+        double submittedTopWidthM = taskParameters.ditchType == DITCH_SQUARE
+                ? 0.0
+                : taskParameters.topWidthM;
+        submitDitchParams(new Params(
+                taskParameters.ditchType,
+                taskParameters.pointA.latitude,
+                taskParameters.pointA.longitude,
+                taskParameters.pointA.heightM,
+                taskParameters.pointB.latitude,
+                taskParameters.pointB.longitude,
+                taskParameters.pointB.heightM,
+                taskParameters.depthM,
+                taskParameters.leftWidthM,
+                taskParameters.rightWidthM,
+                submittedTopWidthM), callback);
+    }
+
+    /** 下发已经转换为协议字段的挖沟参数（0x20）。 */
     public void submitDitchParams(Params params, StepCallback callback) {
         if (!ensureLink(callback)) {
             return;

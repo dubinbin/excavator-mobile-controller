@@ -320,6 +320,7 @@ final class WebTaskTcuController {
         workflow.confirmTaskStart(new LevelTcuWorkflow.StepCallback() {
             @Override
             public void onSuccess() {
+                // 后续改一下，这个发到前端，前端才把页面关闭
                 sendStateToWebView(TcuBusinessCodec.MSG_TASK_CONFIRM_ACK, workflow.getPhase().name());
                 activateTask(TaskTypeState.Type.LEVEL);
             }
@@ -366,23 +367,24 @@ final class WebTaskTcuController {
             double targetLatitude = optionalDouble(
                     result, "targetLatitude", Double.NaN);
 
-            // 第一步：原子地保存 Web 解析结果，供后续真实偏离量算法读取。
-            LevelTaskState.update(new LevelTaskState.TaskParameters(
-                    referencePoint,
-                    heightMode,
-                    currentReferencePointM,
-                    targetAltitudeM,
-                    digSizeM,
-                    currentLocation,
-                    targetLongitude,
-                    targetLatitude));
+            LevelTaskState.TaskParameters taskParameters =
+                    new LevelTaskState.TaskParameters(
+                            referencePoint,
+                            heightMode,
+                            currentReferencePointM,
+                            targetAltitudeM,
+                            digSizeM,
+                            currentLocation,
+                            targetLongitude,
+                            targetLatitude);
+
+            LevelTaskState.update(taskParameters);
 
             // 临时 mock 阶段不等待尚未闭环的 TCU 0x11/0x40 流程。
             // 本地激活后 MainActivity 才会显示左右竖条并开始生成模拟偏离量。
-                       // 目标高程仍按现有 TCU 流程下发；左右机身偏离量暂由首页 mock。
+            // 目标高程仍按现有 TCU 流程下发；左右机身偏离量暂由首页 mock。
             LevelTcuWorkflow workflow = LevelTcuWorkflow.getInstance();
-            workflow.submitLevelParams(
-                    new LevelTcuWorkflow.Params(targetAltitudeM),
+            workflow.submitLevelParams(taskParameters,
                     new LevelTcuWorkflow.StepCallback() {
                         @Override
                         public void onSuccess() {
@@ -421,14 +423,16 @@ final class WebTaskTcuController {
             //         "longitude": "114.85",
             //         "latitude": "22.85"
             //     },
+            //     "digSelectedType": "square" // trapezoid,
             //     "abPointDistance": 4,
             //     "L_Width": 0.8,
             //     "R_Width": 7.5,
             //     "W_Width": 0.3,
             //     "H_Height": 0.4
             // }
-            WebPoint a = parsePoint(requiredObject(result, "PointAInfo"));
-            WebPoint b = parsePoint(requiredObject(result, "PointBInfo"));
+
+            WebPoint ditchPointA = parsePoint(requiredObject(result, "PointAInfo"));
+            WebPoint ditchPointB = parsePoint(requiredObject(result, "PointBInfo"));
             int ditchType = "trapezoid".equalsIgnoreCase(
                     result.optString("digSelectedType", "square"))
                     ? DitchTcuWorkflow.DITCH_TRAPEZOID
@@ -436,19 +440,27 @@ final class WebTaskTcuController {
             double depthM = requiredDouble(result, "H_Height");
             double leftWidthM = requiredDouble(result, "L_Width");
             double rightWidthM = requiredDouble(result, "R_Width");
-            double topWidthM = ditchType == DitchTcuWorkflow.DITCH_SQUARE
-                    ? 0.0 : requiredDouble(result, "W_Width");
-            DitchTaskState.setGuidanceTrenchBottomElevationM(
-                    (a.heightM + b.heightM) / 2.0 - depthM);
+            double topWidthM = optionalDouble(result, "W_Width", 0.0);
+            double abDistanceM = requiredDouble(result, "abPointDistance");
+
+            DitchTaskState.TaskParameters taskParameters =
+                    new DitchTaskState.TaskParameters(
+                            ditchType,
+                            new DitchTaskState.Point(ditchPointA.lat, ditchPointA.lon, ditchPointA.heightM),
+                            new DitchTaskState.Point(ditchPointB.lat, ditchPointB.lon, ditchPointB.heightM),
+                            abDistanceM,
+                            depthM,
+                            leftWidthM,
+                            rightWidthM,
+                            topWidthM);
+
+            DitchTaskState.update(taskParameters);
+
             DitchTcuWorkflow workflow = DitchTcuWorkflow.getInstance();
-            workflow.submitDitchParams(new DitchTcuWorkflow.Params(
-                    ditchType, a.lat, a.lon, a.heightM, b.lat, b.lon, b.heightM,
-                    depthM, leftWidthM, rightWidthM, topWidthM),
+            workflow.submitDitchParams(taskParameters,
                     new DitchTcuWorkflow.StepCallback() {
                         @Override
                         public void onSuccess() {
-                            sendStateToWebView(TcuBusinessCodec.MSG_DITCH_PARAMS_ACK,
-                                    workflow.getPhase().name());
                             confirmDitchTask();
                         }
 
@@ -487,7 +499,13 @@ final class WebTaskTcuController {
             //         "longitude": "2",
             //         "latitude": "8"
             //     },
+            //     "repairSlopeSelectedType: "bottom" // top
             //     "abPointDistance": 3,
+            //     "abHeightDifference": 1.5,
+            //     "slopeRatio": 2,
+            //     "verticalHeight": 1.5,
+            //     "horizontalDistance": 2,
+            //     "slopeAngle": 60,
             //     "sectionParameter": {
             //         "AB_Width": "2",
             //         "H_Width": "3",
@@ -499,31 +517,40 @@ final class WebTaskTcuController {
             WebPoint b = parsePoint(requiredObject(result, "PointBInfo"));
             WebPoint c = parsePoint(requiredObject(result, "PointCInfo"));
             JSONObject section = requiredObject(result, "sectionParameter");
-            double verticalM = requiredDouble(section, "H_Width");
-            if (verticalM == 0.0) {
-                throw new IllegalArgumentException("修坡垂高 H 不能为 0");
-            }
-            double horizontalM = requiredDouble(section, "L_Width");
-            double abDistanceM = optionalDouble(result, "abPointDistance",
-                    optionalDouble(section, "AB_Width",
-                            TcuBusinessCodec.horizontalDistanceM(a.lat, a.lon, b.lat, b.lon)));
-            if (abDistanceM <= 0.0) {
-                abDistanceM = TcuBusinessCodec.horizontalDistanceM(a.lat, a.lon, b.lat, b.lon);
-            }
+            double abDistanceM = requiredDouble(result, "abPointDistance"); // ab距离
+            double abHeightDifferenceM = requiredDouble(result, "abHeightDifference"); // AB高差
+            double slopeRatio = requiredDouble(result, "slopeRatio"); // 坡比
+            double verticalHeightM = requiredDouble(result, "verticalHeight"); // 垂高
+            double slopeAngle = requiredDouble(result, "slopeAngle"); // 坡角
+            double horizontalDistanceM = requiredDouble(result, "horizontalDistance"); // 平距
+
+
             int repairType = "bottom".equalsIgnoreCase(
                     result.optString("repairSlopeSelectedType", "top"))
                     ? SlopeRepairTcuWorkflow.TYPE_BOTTOM_LINE
                     : SlopeRepairTcuWorkflow.TYPE_TOP_LINE;
-            SlopeRepairTaskState.setGuidanceDesignElevationM(
-                    (a.heightM + b.heightM + c.heightM) / 3.0);
+            String slopeDirection = section.optString("SLOPE_TYPE", "");
+
+            SlopeRepairTaskState.TaskParameters taskParameters =
+                    new SlopeRepairTaskState.TaskParameters(
+                            repairType,
+                            new SlopeRepairTaskState.Point(a.lat, a.lon, a.heightM),
+                            new SlopeRepairTaskState.Point(b.lat, b.lon, b.heightM),
+                            new SlopeRepairTaskState.Point(c.lat, c.lon, c.heightM),
+                            verticalHeightM,
+                            horizontalDistanceM,
+                            abDistanceM,
+                            abHeightDifferenceM,
+                            slopeRatio,
+                            slopeAngle,
+                            slopeDirection);
+
+            SlopeRepairTaskState.update(taskParameters);
+
             SlopeRepairTcuWorkflow workflow = SlopeRepairTcuWorkflow.getInstance();
-            workflow.submitSlopeParams(new SlopeRepairTcuWorkflow.Params(
-                    repairType, a.lat, a.lon, a.heightM, b.lat, b.lon, b.heightM,
-                    c.lat, c.lon, c.heightM, horizontalM / verticalM, verticalM, horizontalM,
-                    abDistanceM, b.heightM - a.heightM), new SlopeRepairTcuWorkflow.StepCallback() {
+            workflow.submitSlopeParams(taskParameters, new SlopeRepairTcuWorkflow.StepCallback() {
                 @Override
                 public void onSuccess() {
-                    sendStateToWebView(TcuBusinessCodec.MSG_SLOPE_PARAMS_ACK, workflow.getPhase().name());
                     confirmSlopeTask();
                 }
 
@@ -540,15 +567,16 @@ final class WebTaskTcuController {
     }
 
     private boolean beginStartRequest() {
-        // if (startRequested) {
-        //     reportError("TASK_START", "任务正在提交，请勿重复操作");
-        //     return false;
-        // }
-        // if (!isFeatureActive()) {
-        //     reportError("TASK_START", "TCU 尚未确认进入当前功能");
-        //     return false;
-        // }
-        startRequested = true;
+        // TODO 先暂时放行
+//         if (startRequested) {
+//             reportError("TASK_START", "任务正在提交，请勿重复操作");
+//             return false;
+//         }
+//         if (!isFeatureActive()) {
+//             reportError("TASK_START", "TCU 尚未确认进入当前功能");
+//             return false;
+//         }
+
         return true;
     }
 
@@ -570,6 +598,7 @@ final class WebTaskTcuController {
         workflow.confirmTaskStart(new DitchTcuWorkflow.StepCallback() {
             @Override
             public void onSuccess() {
+                // 后续改一下，这个发到前端，前端才把页面关闭
                 sendStateToWebView(TcuBusinessCodec.MSG_TASK_CONFIRM_ACK, workflow.getPhase().name());
                 activateTask(TaskTypeState.Type.DITCH);
             }
@@ -587,6 +616,7 @@ final class WebTaskTcuController {
         workflow.confirmTaskStart(new SlopeRepairTcuWorkflow.StepCallback() {
             @Override
             public void onSuccess() {
+                // 后续改一下，这个发到前端，前端才把页面关闭
                 sendStateToWebView(TcuBusinessCodec.MSG_TASK_CONFIRM_ACK, workflow.getPhase().name());
                 activateTask(TaskTypeState.Type.SLOPE);
             }

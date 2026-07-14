@@ -117,7 +117,7 @@ public final class LevelTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
      * 这里接收的是最终设计高程，不再重复叠加测点高度；仍要求先完成 0x10/0x90，
      * 以保证流程符合 imu.txt §6.2。
      */
-    public void submitLevelParams(Params params, StepCallback callback) {
+    public void submitLevelParams(LevelTaskState.TaskParameters taskParameters, StepCallback callback) {
         if (!ensureLink(callback)) {
             return;
         }
@@ -125,11 +125,11 @@ public final class LevelTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
             fail(callback, "请先完成参考点测点");
             return;
         }
-        if (params == null) {
+        if (taskParameters == null) {
             fail(callback, "目标高程无效");
             return;
         }
-        int targetTenthCm = TcuBusinessCodec.metersToTenthCm(params.targetHeightM);
+        int targetTenthCm = TcuBusinessCodec.metersToTenthCm(taskParameters.targetAltitudeM);
         sendAndWait(TcuBusinessCodec.MSG_LEVEL_PARAMS_ACK,
                 TcuBusinessCodec.buildLevelParams(targetTenthCm),
                 callback);

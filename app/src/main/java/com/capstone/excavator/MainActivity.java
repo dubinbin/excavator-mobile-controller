@@ -443,6 +443,10 @@ public class MainActivity extends ScaledAppCompatActivity {
         // SlopeRepairTaskState.reset();
         if (endingType == TaskTypeState.Type.LEVEL) {
             LevelTaskState.resetAll();
+        } else if (endingType == TaskTypeState.Type.DITCH) {
+            DitchTaskState.resetAll();
+        } else if (endingType == TaskTypeState.Type.SLOPE) {
+            SlopeRepairTaskState.resetAll();
         }
     }
 
@@ -477,16 +481,21 @@ public class MainActivity extends ScaledAppCompatActivity {
         if (!guidanceRunning) {
             levelTaskGuidance.clear();
         } else {
-            updateMockLevelGuidanceIfNeeded();
+            updateMockTaskGuidanceIfNeeded();
         }
     }
 
-    /** 找平偏离公式完成前，每次只 mock 左右 VerticalSpectrumGaugeView。 */
-    private void updateMockLevelGuidanceIfNeeded() {
-        boolean levelRunning = TaskTypeState.getInstance().getType()
-                == TaskTypeState.Type.LEVEL
-                && WorkRunState.getInstance().getState() == WorkRunState.State.RUNNING;
-        if (levelRunning && LevelTaskState.hasTaskParameters()) {
+    /** 找平 / 挖沟偏离公式完成前，只 mock 共用的左右 VerticalSpectrumGaugeView。 */
+    private void updateMockTaskGuidanceIfNeeded() {
+        if (WorkRunState.getInstance().getState() != WorkRunState.State.RUNNING) {
+            return;
+        }
+        TaskTypeState.Type taskType = TaskTypeState.getInstance().getType();
+        boolean parametersReady = (taskType == TaskTypeState.Type.LEVEL
+                && LevelTaskState.hasTaskParameters())
+                || (taskType == TaskTypeState.Type.DITCH
+                && DitchTaskState.hasTaskParameters());
+        if (parametersReady) {
             levelTaskGuidance.updateMockActivityGaugeDeviations();
         }
     }
@@ -731,8 +740,8 @@ public class MainActivity extends ScaledAppCompatActivity {
         // 更新定位信息（带小幅随机波动）
         updatePositioning();
 
-        // 找平真实偏离公式尚未确定，暂时每秒刷新一次左右竖条模拟值。
-        updateMockLevelGuidanceIfNeeded();
+        // 找平 / 挖沟真实偏离公式尚未确定，暂时每秒刷新一次左右竖条模拟值。
+        updateMockTaskGuidanceIfNeeded();
         
         // 更新挖掘深度（带小幅随机波动）
 //        updateDigDepth();
