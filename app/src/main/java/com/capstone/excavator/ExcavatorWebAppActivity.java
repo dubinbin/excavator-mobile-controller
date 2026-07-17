@@ -35,6 +35,7 @@ public class ExcavatorWebAppActivity extends ScaledAppCompatActivity {
         if (webAppView == null) {
             webAppView = new ExcavatorWebAppView(UiScaleConfig.unscaledContext(this));
         }
+        ControllerLocalSettings.restoreGlobalStatus(this);
         taskController = new WebTaskTcuController(new WebTaskTcuController.Host() {
             @Override
             public void sendToWeb(String messageJson) {
@@ -69,9 +70,7 @@ public class ExcavatorWebAppActivity extends ScaledAppCompatActivity {
                 ViewGroup.LayoutParams.MATCH_PARENT
         ));
         if (reusedWarmedView) {
-            // 只切换 SPA hash，保留已解析的 JS、React runtime 和图片解码结果。
             webAppView.loadRoute(initialRoute);
-            // 预热阶段的 WEBVIEW_READY 会被 NativeBridge 主动抑制，复用时需显式启动 TCU 流程。
             taskController.onWebReady();
         }
         configureKeyboardInsets(webAppView);

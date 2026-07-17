@@ -31,6 +31,12 @@ public class SettingsActivity extends ScaledAppCompatActivity {
     private static final String NATIVE_EVENT_JOYSTICK_MAPPING = "JOYSTICK_MAPPING";
     private static final String NATIVE_EVENT_SAVED_CONFIG_SIGNAL = "GET_SAVED_CONFIG_SINGAL";
     private static final String NATIVE_EVENT_SAVED_CONFIG = "GET_SAVED_CONFIG";
+
+    private static final String NATIVE_SIZE_INFO_SETTING_SAVED_SIGNAL = "SIZE_INFO_SETTING_SAVED_SIGNAL";
+    private static final String NATIVE_GET_SIZE_INFO_SETTING_SAVED_SIGNAL = "GET_SIZE_INFO_SETTING_SAVED_SIGNAL";
+
+    private static final String NATIVE_IMU_INFO_SETTING_SAVED_SIGNAL = "IMU_INFO_SETTING_SAVED_SIGNAL"; // 设置 imu保存修改
+    private static final String NATIVE_GET_IMU_INFO_SETTING_SAVED_SIGNAL = "GET_IMU_INFO_SETTING_SAVED_SIGNAL"; // 获取imu信息配置
     
     private static final String WEB_EVENT_JOYSTICK_MAPPING_SAVED = "JOYSTICK_MAPPING_SAVED";
     private static final String SAVE_CONFIG_FROM_WEBVIEW = "SAVE_CONFIG_SIGNAL";
@@ -38,6 +44,9 @@ public class SettingsActivity extends ScaledAppCompatActivity {
     private static final String PREFS_GENERAL_UI = "general_ui_prefs";
     private static final String KEY_BRIGHTNESS_PERCENT = "brightness_percent";
     private static final String NATIVE_EVENT_CURRENT_STATUS = "GET_CURRENT_STATUS";
+    private static final String GET_SIZE_INFO_SETTING_SAVED = "GET_SIZE_INFO_SETTING_SAVED";
+
+    private static final String GET_IMU_INFO_SETTING_SAVED = "GET_IMU_INFO_SETTING_SAVED"; // 获取imu信息配置onmessage
 
     public static final String EXTRA_INITIAL_PAGE = "initial_page";
     public static final int PAGE_GENERAL = 3;
@@ -134,6 +143,62 @@ public class SettingsActivity extends ScaledAppCompatActivity {
             onWebAppModifyBrightnessImmediately(message);
         } else if (NATIVE_EVENT_SAVED_CONFIG_SIGNAL.equals(type)) {
             sendSavedConfigMessage();
+        } else if (NATIVE_SIZE_INFO_SETTING_SAVED_SIGNAL.equals(type)) { // 设置上传挖机尺寸信息
+            onWebAppSaveSizeConfig(message);
+        } else if (NATIVE_GET_SIZE_INFO_SETTING_SAVED_SIGNAL.equals(type)) {
+            sendSavedSizeConfigMessage();
+        } else if (NATIVE_IMU_INFO_SETTING_SAVED_SIGNAL.equals(type)) {
+            onWebAppSaveImuSetting(message);
+        } else if (NATIVE_GET_IMU_INFO_SETTING_SAVED_SIGNAL.equals(type)) {
+            sendSavedImuSettingMessage();
+        }
+    }
+
+    private void sendSavedImuSettingMessage() {
+        if (settingView == null) {
+            return;
+        }
+        JSONObject payload = new JSONObject();
+        String savedSetting = ControllerLocalSettings.loadImuSetting(this);
+        if (savedSetting != null && !savedSetting.isEmpty()) {
+            try {
+                payload = new JSONObject(savedSetting);
+            } catch (JSONException e) {
+                Log.w(TAG, "parse saved IMU setting failed", e);
+            }
+        }
+
+        try {
+            JSONObject message = new JSONObject();
+            message.put("type", GET_IMU_INFO_SETTING_SAVED);
+            message.put("payload", payload);
+            settingView.sendMessageToWeb(message.toString());
+        } catch (JSONException e) {
+            Log.w(TAG, "build saved IMU setting message failed", e);
+        }
+    }
+
+    private void sendSavedSizeConfigMessage() {
+        if (settingView == null) {
+            return;
+        }
+        JSONObject payload = new JSONObject();
+        String savedConfig = ControllerLocalSettings.loadSizeConfig(this);
+        if (savedConfig != null && !savedConfig.isEmpty()) {
+            try {
+                payload = new JSONObject(savedConfig);
+            } catch (JSONException e) {
+                Log.w(TAG, "parse saved size config failed", e);
+            }
+        }
+
+        try {
+            JSONObject message = new JSONObject();
+            message.put("type", GET_SIZE_INFO_SETTING_SAVED);
+            message.put("payload", payload);
+            settingView.sendMessageToWeb(message.toString());
+        } catch (JSONException e) {
+            Log.w(TAG, "build saved size config message failed", e);
         }
     }
 
@@ -178,6 +243,50 @@ public class SettingsActivity extends ScaledAppCompatActivity {
         }
         setResult(RESULT_OK, resultIntent);
         Toast.makeText(this, "设置已保存", Toast.LENGTH_SHORT).show();
+    }
+
+    private void onWebAppSaveSizeConfig(String message) {
+        JSONObject payload = parsePayload(message);
+        if (payload == null) {
+            Log.w(TAG, "SIZE_INFO_SETTING_SAVED_SIGNAL payload missing");
+            return;
+        }
+
+        Object modeValue = payload.opt("mode");
+        Object idValue = payload.opt("id");
+        if (!(modeValue instanceof String) || !(idValue instanceof String)) {
+            Log.w(TAG, "size config mode and id must be strings");
+            return;
+        }
+
+        String mode = (String) modeValue;
+        String id = (String) idValue;
+        if (!("custom".equals(mode) || "machine".equals(mode)) || id.trim().isEmpty()) {
+            Log.w(TAG, "invalid size config mode or id");
+            return;
+        }
+
+        ControllerLocalSettings.saveSizeConfig(this, payload.toString());
+    }
+
+    private void onWebAppSaveImuSetting(String message) {
+        JSONObject payload = parsePayload(message);
+        if (payload == null) {
+            Log.w(TAG, "IMU_INFO_SETTING_SAVED_SIGNAL payload missing");
+            return;
+        }
+
+        Object imu1 = payload.opt("imu1");
+        Object imu2 = payload.opt("imu2");
+        Object imu3 = payload.opt("imu3");
+        if (!(imu1 instanceof String)
+                || !(imu2 instanceof String)
+                || !(imu3 instanceof String)) {
+            Log.w(TAG, "imu1, imu2 and imu3 must be strings");
+            return;
+        }
+
+        ControllerLocalSettings.saveImuSetting(this, payload.toString());
     }
 
     private void onWebAppModifyBrightnessImmediately(String message) {

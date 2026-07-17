@@ -204,10 +204,13 @@ final class WebTaskTcuController {
         String targetLongitude = payload.optString("targetLongitude"); // 目标经度
         String targetLatitude = payload.optString("targetLatitude"); // 目标纬度
 
-        GlobalStatus.ImuAngles currentExcavatorInfo =
+        GlobalStatus.ImuAngles currentImuAngles =
                 GlobalStatus.getInstance().getRunTimeImuData();
+        GlobalStatus.ExcavatorSizeConfig currentExcavatorInfo =
+                GlobalStatus.getInstance().getExcavatorSizeConfig();
         // TODO
-        //currentExcavatorInfo.bucketAngle
+        // currentImuAngles.bucketAngle
+        // currentExcavatorInfo.lb
 
         double calcHeight = 0.02;
         this.sendToWebviewAfterCalc(calcHeight);

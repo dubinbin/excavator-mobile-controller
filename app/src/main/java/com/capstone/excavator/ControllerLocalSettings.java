@@ -2,6 +2,10 @@ package com.capstone.excavator;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.util.Log;
+
+import org.json.JSONException;
+import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -10,17 +14,19 @@ import java.util.Set;
 /**
  * 控制器侧本地持久化（SharedPreferences）。集中管理键名，便于后续扩展更多字段。
  * <p>
- * 当前包含：直播流地址、铲斗模式摇杆通道→动作映射（AB/CD/EF/GH）。新增配置时请在本类增加常量与
- * {@link Snapshot} 字段，并更新 {@link #load} / {@link #save}。
+ * 当前包含：直播流地址、铲斗模式摇杆通道→动作映射（AB/CD/EF/GH）、挖机尺寸与 IMU 设置。
  */
 public final class ControllerLocalSettings {
 
+    private static final String TAG = "ControllerLocalSettings";
     private static final String PREFS_NAME = "controller_local_settings";
 
     private static final String KEY_SCHEMA_VERSION = "schema_version";
     private static final int SCHEMA_VERSION = 1;
 
     private static final String KEY_VIDEO_STREAM_URL = "video_stream_url";
+    private static final String KEY_SIZE_CONFIG_JSON = "size_config_json";
+    private static final String KEY_IMU_SETTING_JSON = "imu_setting_json";
 
     private static final String KEY_JOY_LEFT_AB = "joystick_map_left_ab";
     private static final String KEY_JOY_LEFT_CD = "joystick_map_left_cd";
@@ -180,6 +186,103 @@ public final class ControllerLocalSettings {
                 .putInt(KEY_SCHEMA_VERSION, SCHEMA_VERSION)
                 .putString(KEY_VIDEO_STREAM_URL, url != null ? url.trim() : "")
                 .apply();
+    }
+
+    /** 按原始 JSON 字符串保存尺寸配置，避免将 "07" 之类字符串转成数值。 */
+    public static void saveSizeConfig(Context context, String sizeConfigJson) {
+        prefs(context).edit()
+                .putInt(KEY_SCHEMA_VERSION, SCHEMA_VERSION)
+                .putString(KEY_SIZE_CONFIG_JSON, nz(sizeConfigJson))
+                .apply();
+        GlobalStatus.getInstance().setExcavatorSizeConfig(parseSizeConfig(sizeConfigJson));
+    }
+
+    /** 未保存过时返回空字符串。 */
+    public static String loadSizeConfig(Context context) {
+        return prefs(context).getString(KEY_SIZE_CONFIG_JSON, "");
+    }
+
+    /** 从本地持久化数据还原可直接用于计算的强类型尺寸快照。 */
+    public static GlobalStatus.ExcavatorSizeConfig loadExcavatorSizeConfig(Context context) {
+        return parseSizeConfig(loadSizeConfig(context));
+    }
+
+    /** 按原始 JSON 字符串保存 Web 端的 IMU 设置，并同步更新运行时快照。 */
+    public static void saveImuSetting(Context context, String imuSettingJson) {
+        prefs(context).edit()
+                .putInt(KEY_SCHEMA_VERSION, SCHEMA_VERSION)
+                .putString(KEY_IMU_SETTING_JSON, nz(imuSettingJson))
+                .apply();
+        GlobalStatus.getInstance().setImuSetting(parseImuSetting(imuSettingJson));
+    }
+
+    /** 未保存过时返回空字符串。 */
+    public static String loadImuSetting(Context context) {
+        return prefs(context).getString(KEY_IMU_SETTING_JSON, "");
+    }
+
+    public static GlobalStatus.ImuSetting loadImuSettingSnapshot(Context context) {
+        return parseImuSetting(loadImuSetting(context));
+    }
+
+    /** 应用启动或任务页进入时，从本地存储恢复所有运行时配置快照。 */
+    public static void restoreGlobalStatus(Context context) {
+        GlobalStatus status = GlobalStatus.getInstance();
+        status.setExcavatorSizeConfig(loadExcavatorSizeConfig(context));
+        status.setImuSetting(loadImuSettingSnapshot(context));
+    }
+
+    private static GlobalStatus.ExcavatorSizeConfig parseSizeConfig(String sizeConfigJson) {
+        if (sizeConfigJson == null || sizeConfigJson.trim().isEmpty()) {
+            return GlobalStatus.ExcavatorSizeConfig.empty();
+        }
+        try {
+            JSONObject json = new JSONObject(sizeConfigJson);
+            return new GlobalStatus.ExcavatorSizeConfig(
+                    json.optString("mode", ""),
+                    json.optString("id", ""),
+                    dimension(json, "Lb"),
+                    dimension(json, "Ls"),
+                    dimension(json, "L2"),
+                    dimension(json, "L3"),
+                    dimension(json, "L4"),
+                    dimension(json, "L5"),
+                    dimension(json, "L6"),
+                    dimension(json, "L7"),
+                    dimension(json, "L8"),
+                    dimension(json, "L10"),
+                    dimension(json, "L11"),
+                    dimension(json, "L12"),
+                    dimension(json, "L13"),
+                    dimension(json, "L14"),
+                    dimension(json, "H1"),
+                    dimension(json, "W"),
+                    dimension(json, "H2"));
+        } catch (JSONException e) {
+            Log.w(TAG, "parse size config failed", e);
+            return GlobalStatus.ExcavatorSizeConfig.empty();
+        }
+    }
+
+    private static GlobalStatus.ImuSetting parseImuSetting(String imuSettingJson) {
+        if (imuSettingJson == null || imuSettingJson.trim().isEmpty()) {
+            return GlobalStatus.ImuSetting.empty();
+        }
+        try {
+            JSONObject json = new JSONObject(imuSettingJson);
+            return new GlobalStatus.ImuSetting(
+                    json.optString("imu1", ""),
+                    json.optString("imu2", ""),
+                    json.optString("imu3", ""));
+        } catch (JSONException e) {
+            Log.w(TAG, "parse IMU setting failed", e);
+            return GlobalStatus.ImuSetting.empty();
+        }
+    }
+
+    private static double dimension(JSONObject json, String key) {
+        double value = json.optDouble(key, 0d);
+        return Double.isFinite(value) ? value : 0d;
     }
 
     private static String nz(String s) {

@@ -321,6 +321,7 @@ public final class LevelTcuWorkflow implements TcuLinkHub.BusinessFrameListener 
         sendAndWait(expectAckMsgId, frame, -1, callback);
     }
 
+    // 发送前记录“等待 0x84”
     private void sendAndWait(
             int expectAckMsgId, byte[] frame, int featureAction, StepCallback callback) {
         clearPending();

@@ -150,6 +150,7 @@ public class MainActivity extends ScaledAppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         SplashScreen.installSplashScreen(this);
         super.onCreate(savedInstanceState);
+        ControllerLocalSettings.restoreGlobalStatus(this);
 
         // 设置全屏模式
         setFullScreenMode();
