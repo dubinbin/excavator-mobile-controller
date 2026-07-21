@@ -208,11 +208,19 @@ final class WebTaskTcuController {
                 GlobalStatus.getInstance().getRunTimeImuData();
         GlobalStatus.ExcavatorSizeConfig currentExcavatorInfo =
                 GlobalStatus.getInstance().getExcavatorSizeConfig();
+        GlobalStatus.ImuSetting currentExcavatorImuSetting =
+                GlobalStatus.getInstance().getImuSetting();
+
+        System.out.println("currentImuAngles: " + currentImuAngles);
+        System.out.println("getRunTimeImuData: " + currentExcavatorInfo);
+        System.out.println("currentExcavatorImuSetting: " + currentExcavatorImuSetting);
+
+        
         // TODO
         // currentImuAngles.bucketAngle
         // currentExcavatorInfo.lb
 
-        double calcHeight = 0.02;
+        double calcHeight = 0.01;
         this.sendToWebviewAfterCalc(calcHeight);
     }
 

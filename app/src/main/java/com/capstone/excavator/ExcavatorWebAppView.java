@@ -22,8 +22,8 @@ public class ExcavatorWebAppView extends ExcavatorPostureView {
             "#/settings/common_setting"
     };
 
-//    private static final String WEB_APP_BASE_URL = "http://192.168.194.247:5173/";
-    private static final String WEB_APP_BASE_URL = "https://appassets.androidplatform.net/assets/web/excavator-web-app/index.html";
+    private static final String WEB_APP_BASE_URL = "http://192.168.20.136:5173/";
+    // private static final String WEB_APP_BASE_URL = "https://appassets.androidplatform.net/assets/web/excavator-web-app/index.html";
     private static final String DEFAULT_ROUTE = "";
     private static String nextInitialRoute = DEFAULT_ROUTE;
 
@@ -32,6 +32,8 @@ public class ExcavatorWebAppView extends ExcavatorPostureView {
     private boolean routeWarmupRequested;
     private boolean routeWarmupStarted;
     private boolean routeWarmupComplete;
+    private int routeWarmupGeneration;
+    private int routeNavigationGeneration;
     private Runnable routeWarmupCompleteListener;
     private String warmupRoutesJson = "[]";
 
@@ -84,6 +86,7 @@ public class ExcavatorWebAppView extends ExcavatorPostureView {
     public void loadRoute(String route) {
         initialRoute = normalizeRoute(route);
         routeWarmupRequested = false;
+        routeWarmupCompleteListener = null;
         cancelRouteWarmup();
         if (!isWebPageReady()) {
             pendingRoute = initialRoute;
@@ -94,6 +97,8 @@ public class ExcavatorWebAppView extends ExcavatorPostureView {
 
     void prewarmRoutes(String[] routes, Runnable onComplete) {
         routeWarmupRequested = true;
+        routeWarmupStarted = false;
+        routeWarmupComplete = false;
         routeWarmupCompleteListener = onComplete;
         warmupRoutesJson = new JSONArray(Arrays.asList(routes)).toString();
         if (isWebPageReady()) {
@@ -105,9 +110,21 @@ public class ExcavatorWebAppView extends ExcavatorPostureView {
         return routeWarmupComplete;
     }
 
+    /**
+     * 只有文档和整轮路由预热都结束后，WebView 才能安全地从 MainActivity 移到新 Activity。
+     * 在加载或路由切换中途 reparent WebView，部分设备的 Chromium renderer 会偶发停在一个
+     * 看似已渲染、但不再处理输入的状态。
+     */
+    boolean isReadyForReuse() {
+        return isWebPageReady() && routeWarmupComplete;
+    }
+
     void cancelRouteWarmup() {
+        int generation = ++routeWarmupGeneration;
         if (routeWarmupStarted && !routeWarmupComplete) {
-            evaluateWebJavascript("window.__excavatorWarmupCancelled = true;");
+            evaluateWebJavascript(
+                    "window.__excavatorWarmupGeneration = " + generation + ";"
+            );
         }
     }
 
@@ -124,12 +141,19 @@ public class ExcavatorWebAppView extends ExcavatorPostureView {
 
     private void navigateRouteWithoutReload(String route) {
         String quotedRoute = JSONObject.quote(normalizeRoute(route));
+        int warmupGeneration = routeWarmupGeneration;
+        int navigationGeneration = ++routeNavigationGeneration;
         evaluateWebJavascript(
-                "window.__excavatorWarmupCancelled = true;"
+                "window.__excavatorWarmupGeneration = " + warmupGeneration + ";"
+                        + "window.__excavatorNavigationGeneration = "
+                        + navigationGeneration + ";"
                         + "if (window.location.hash === " + quotedRoute + ") {"
                         + "window.location.hash = '#/';"
                         + "requestAnimationFrame(() => requestAnimationFrame(() => {"
+                        + "if (window.__excavatorNavigationGeneration === "
+                        + navigationGeneration + ") {"
                         + "window.location.hash = " + quotedRoute + ";"
+                        + "}"
                         + "}));"
                         + "} else {"
                         + "window.location.hash = " + quotedRoute + ";"
@@ -142,9 +166,13 @@ public class ExcavatorWebAppView extends ExcavatorPostureView {
             return;
         }
         routeWarmupStarted = true;
+        int generation = ++routeWarmupGeneration;
         evaluateWebJavascript(
                 "(() => {"
-                        + "window.__excavatorWarmupCancelled = false;"
+                        + "const generation = " + generation + ";"
+                        + "window.__excavatorWarmupGeneration = generation;"
+                        + "const isCancelled = () => "
+                        + "window.__excavatorWarmupGeneration !== generation;"
                         + "const routes = " + warmupRoutesJson + ";"
                         + "const frames = () => new Promise(resolve => "
                         + "requestAnimationFrame(() => requestAnimationFrame(resolve)));"
@@ -166,17 +194,17 @@ public class ExcavatorWebAppView extends ExcavatorPostureView {
                         + "};"
                         + "(async () => {"
                         + "for (const route of routes) {"
-                        + "if (window.__excavatorWarmupCancelled) return;"
+                        + "if (isCancelled()) return;"
                         + "window.location.hash = route;"
                         + "await settle();"
                         + "}"
-                        + "if (window.__excavatorWarmupCancelled) return;"
+                        + "if (isCancelled()) return;"
                         + "window.location.hash = '#/';"
                         + "await frames();"
-                        + "if (!window.__excavatorWarmupCancelled) {"
-                        + "AndroidWebViewBridge.onPreloadReady();"
+                        + "if (!isCancelled()) {"
+                        + "AndroidWebViewBridge.onPreloadReady(generation);"
                         + "}"
-                        + "})().catch(() => AndroidWebViewBridge.onPreloadReady());"
+                        + "})().catch(() => {});"
                         + "})();"
         );
     }
@@ -245,9 +273,11 @@ public class ExcavatorWebAppView extends ExcavatorPostureView {
         }
 
         @JavascriptInterface
-        public void onPreloadReady() {
+        public void onPreloadReady(int generation) {
             post(() -> {
-                if (!routeWarmupRequested || routeWarmupComplete) {
+                if (!routeWarmupRequested
+                        || routeWarmupComplete
+                        || generation != routeWarmupGeneration) {
                     return;
                 }
                 routeWarmupComplete = true;

@@ -2,6 +2,7 @@ package com.capstone.excavator;
 
 import android.app.Activity;
 import android.content.Context;
+import android.content.MutableContextWrapper;
 import android.content.SharedPreferences;
 import android.util.Log;
 import android.view.View;
@@ -91,6 +92,22 @@ final class ExcavatorWebAppPreloader {
             return null;
         }
 
+        // WebView 在加载页面或执行 SPA 路由预热时不能跨 Window 搬动。实测某些 Chromium
+        // 版本会保留最后一帧画面，却不再响应触控。未完成的预热视图直接丢弃，由目标
+        // Activity 创建一个带正确初始路由的新实例；资源缓存仍然可以复用。
+        if (!view.isReadyForReuse()) {
+            Log.i(TAG, "discard unfinished " + kind + " web app view");
+            destroyView(view);
+            return null;
+        }
+
+        Context viewContext = view.getContext();
+        if (viewContext instanceof MutableContextWrapper) {
+            ((MutableContextWrapper) viewContext).setBaseContext(
+                    UiScaleConfig.unscaledContext(activity)
+            );
+        }
+
         ViewGroup parent = (ViewGroup) view.getParent();
         if (parent != null) {
             view.setDestroyOnDetach(false);
@@ -101,6 +118,7 @@ final class ExcavatorWebAppPreloader {
         view.setTranslationX(0f);
         view.setClickable(true);
         view.setFocusable(true);
+        view.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_AUTO);
         view.setDestroyOnDetach(true);
         view.resume();
         Log.i(TAG, "reuse warmed " + kind + " web app view in "
@@ -149,8 +167,11 @@ final class ExcavatorWebAppPreloader {
             String[] routes,
             String kind
     ) {
+        MutableContextWrapper reusableContext = new MutableContextWrapper(
+                UiScaleConfig.unscaledContext(activity)
+        );
         ExcavatorWebAppView view = new ExcavatorWebAppView(
-                UiScaleConfig.unscaledContext(activity),
+                reusableContext,
                 bypassInitialCache
         );
         view.setDestroyOnDetach(false);
