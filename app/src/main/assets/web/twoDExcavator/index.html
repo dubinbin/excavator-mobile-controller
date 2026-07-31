@@ -6,15 +6,13 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
     />
-    <title>2D Excavator IMU View</title>
+    <title>2D 挖掘机姿态角度</title>
     <style>
       :root {
-        color-scheme: dark;
         --stage-width: 616;
         --stage-height: 403;
-        --blue: #7da2ff;
-        --blue-soft: #d7e2ff;
-        --yellow: #ffd100;
+        --diagram-line: rgba(255, 255, 255, 0.9);
+        --diagram-fill: #969696;
       }
 
       * {
@@ -42,29 +40,29 @@
         position: relative;
         width: 100vw;
         height: 100vh;
+        background: transparent;
         /* overflow: hidden; */
       }
 
       .stage {
         position: absolute;
-        left: 0;
+        left: 10px;
         top: 0;
-        width: 616px;
-        height: 403px;
         transform: translate(var(--stage-left, 0), var(--stage-top, 0))
           scale(var(--stage-scale, 1));
         transform-origin: 0 0;
+        isolation: isolate;
       }
 
       .part {
         position: absolute;
+        z-index: 1;
         display: block;
         user-select: none;
         -webkit-user-drag: none;
-        transition:
-          left 70ms linear,
-          top 70ms linear,
-          transform 70ms linear;
+        opacity: 0.72;
+        filter: brightness(0.62)
+          drop-shadow(0 0 1px rgba(255, 255, 255, 0.95));
         will-change: transform, left, top;
       }
 
@@ -75,35 +73,24 @@
         height: 84px;
       }
 
+      .measurement-layer {
+        position: absolute;
+        inset: 0;
+        z-index: 3;
+        width: 616px;
+        height: 403px;
+        pointer-events: none;
+        transition: opacity 70ms linear;
+      }
+
       .angle-label {
         position: absolute;
-        z-index: 10;
-        min-width: 150px;
-        font-size: 40px;
-        font-weight: 800;
-        line-height: 1;
-        letter-spacing: 0.02em;
-        text-shadow: 0 0 12px rgba(0, 0, 0, 0.4);
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        clip-path: inset(50%);
         white-space: nowrap;
-        pointer-events: none;
-        transform: translate(-50%, -50%);
-        transition:
-          left 70ms linear,
-          top 70ms linear;
-        will-change: transform, left, top;
-      }
-
-      .angle-label.boom,
-      .angle-label.stick {
-        color: var(--blue);
-      }
-
-      .angle-label.stick {
-        color: var(--blue-soft);
-      }
-
-      .angle-label.bucket {
-        color: var(--yellow);
       }
 
       .debug-panel {
@@ -137,15 +124,29 @@
       .debug-row input {
         width: 100%;
       }
+
+      @media (prefers-reduced-motion: reduce) {
+        .part,
+        .measurement-layer {
+          transition: none;
+        }
+      }
     </style>
   </head>
   <body>
     <main class="viewport" aria-label="2D excavator IMU animation">
       <div class="stage" id="stage">
-        <img class="part base" src="./base.png" alt="excavator base" />
-        <img class="part boom" id="boom" src="./boom.png" alt="boom" />
-        <img class="part stick" id="stick" src="./stick.png" alt="stick" />
-        <img class="part bucket" id="bucket" src="./bucket.png" alt="bucket" />
+        <canvas
+          class="measurement-layer"
+          id="measurementLayer"
+          width="616"
+          height="403"
+          aria-hidden="true"
+        ></canvas>
+        <img class="part base" src="./base.svg" alt="excavator base" />
+        <img class="part boom" id="boom" src="./boom.svg" alt="boom" />
+        <img class="part stick" id="stick" src="./stick.svg" alt="stick" />
+        <img class="part bucket" id="bucket" src="./bucket.svg" alt="bucket" />
 
         <div class="angle-label boom" id="boomLabel">-70&deg;</div>
         <div class="angle-label stick" id="stickLabel">180&deg;</div>
@@ -177,9 +178,9 @@
 
         // These default values reproduce the supplied design frame.
         const DEFAULT_ANGLES = {
-          boom: -70,
-          stick: 180,
-          bucket: 60,
+          boom: -69.0,
+          stick: 96,
+          bucket: 120,
         };
 
         const ANGLE_LIMITS = {
@@ -190,13 +191,6 @@
           bucket: { min: 0, max: 180 },
         };
 
-        /** Android joints.*.z — must allow 0 (avoid `joint && joint.z` falsy bug). */
-        function readJointZ(joint) {
-          if (joint == null) return undefined;
-          const z = Number(joint.z);
-          return Number.isFinite(z) ? z : undefined;
-        }
-
         const PARTS = {
           boom: {
             el: document.getElementById("boom"),
@@ -205,7 +199,7 @@
             height: 134,
             pivot: { x: 0, y: 133 },
             end: { x: 334, y: 0 },
-            labelOffset: { x: -26, y: -150 },
+            labelOffset: { x: -106, y: -160 },
           },
           stick: {
             el: document.getElementById("stick"),
@@ -214,7 +208,7 @@
             height: 212,
             pivot: { x: 0, y: 33 },
             end: { x: 52, y: 212 },
-            labelOffset: { x: 92, y: -92 },
+            labelOffset: { x: 90, y: -90 },
           },
           bucket: {
             el: document.getElementById("bucket"),
@@ -222,6 +216,7 @@
             width: 104,
             height: 96,
             pivot: { x: 84, y: 0 },
+            end: { x: 0, y: 90 },
             labelOffset: { x: -132, y: 52 },
           },
         };
@@ -229,6 +224,8 @@
         const state = { ...DEFAULT_ANGLES };
         const stageEl = document.getElementById("stage");
         const viewportEl = document.querySelector(".viewport");
+        const measurementLayer = document.getElementById("measurementLayer");
+        const measurementContext = measurementLayer.getContext("2d");
 
         function fitStage() {
           const rect = viewportEl.getBoundingClientRect();
@@ -286,7 +283,7 @@
 
         function stickDebugProgressToAngle(progress) {
           if (progress === 180) return 180;
-          if (progress < 180) return -progress;
+          if (progress < 180) return - progress;
           return 360 - progress;
         }
 
@@ -309,10 +306,107 @@
           };
         }
 
-        function placeLabel(label, anchor, offset, value) {
-          label.style.left = `${anchor.x + offset.x}px`;
-          label.style.top = `${anchor.y + offset.y}px`;
-          label.textContent = `${Number(value).toFixed(2)}°`;
+        function formatDegrees(value) {
+          const rounded = Math.round(Number(value) * 10) / 10;
+          return `${Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(1)}°`;
+        }
+
+        function getDisplayAngle(key, value) {
+          return key === "stick" ? 180 - value : value;
+        }
+
+        function placeLabel(label, value) {
+          label.textContent = formatDegrees(value);
+        }
+
+        function vectorAngle(from, to) {
+          return Math.atan2(to.y - from.y, to.x - from.x);
+        }
+
+        function pointOnRay(origin, angle, distance) {
+          return {
+            x: origin.x + Math.cos(angle) * distance,
+            y: origin.y + Math.sin(angle) * distance,
+          };
+        }
+
+        function shortestSweep(startAngle, endAngle) {
+          let sweep = endAngle - startAngle;
+          while (sweep > Math.PI) sweep -= Math.PI * 2;
+          while (sweep < -Math.PI) sweep += Math.PI * 2;
+          return sweep;
+        }
+
+        function prepareMeasurementLayer() {
+          const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+          const width = Math.round(STAGE.width * pixelRatio);
+          const height = Math.round(STAGE.height * pixelRatio);
+
+          if (
+            measurementLayer.width !== width ||
+            measurementLayer.height !== height
+          ) {
+            measurementLayer.width = width;
+            measurementLayer.height = height;
+          }
+
+          measurementContext.setTransform(
+            pixelRatio,
+            0,
+            0,
+            pixelRatio,
+            0,
+            0
+          );
+          measurementContext.clearRect(0, 0, STAGE.width, STAGE.height);
+          measurementContext.lineCap = "round";
+          measurementContext.lineJoin = "round";
+        }
+
+        function drawGuideLine(start, end) {
+          measurementContext.save();
+          measurementContext.beginPath();
+          measurementContext.setLineDash([5, 5]);
+          measurementContext.lineWidth = 1.25;
+          measurementContext.strokeStyle = "rgba(255, 255, 255, 0.88)";
+          measurementContext.moveTo(start.x, start.y);
+          measurementContext.lineTo(end.x, end.y);
+          measurementContext.stroke();
+          measurementContext.restore();
+        }
+
+        function drawAxis(origin, angle, backward, forward) {
+          drawGuideLine(
+            pointOnRay(origin, angle, -backward),
+            pointOnRay(origin, angle, forward)
+          );
+        }
+
+        function drawJoint(point) {
+          measurementContext.save();
+          measurementContext.beginPath();
+          measurementContext.arc(point.x, point.y, 3.25, 0, Math.PI * 2);
+          measurementContext.fillStyle = "#f3f3f3";
+          measurementContext.fill();
+          measurementContext.restore();
+        }
+
+        function drawMeasurements({
+          boomPivot,
+          stickPivot,
+          bucketPivot,
+          bucketTip,
+        }) {
+          prepareMeasurementLayer();
+
+          const boomAngle = vectorAngle(boomPivot, stickPivot);
+          const boomReturnAngle = vectorAngle(stickPivot, boomPivot);
+          const stickAngle = vectorAngle(stickPivot, bucketPivot);
+          const stickReturnAngle = vectorAngle(bucketPivot, stickPivot);
+          const bucketAngle = vectorAngle(bucketPivot, bucketTip);
+
+          // The main-boom sensor uses the vertical datum plane.
+
         }
 
         function draw() {
@@ -323,35 +417,47 @@
             DEFAULT_ANGLES.bucket
           );
 
-          const boomPivot = { x: 116, y: 258 };
-          const stickPivot = placePart(PARTS.boom, boomPivot, boomDelta);
-          const bucketPivot = placePart(PARTS.stick, stickPivot, stickDelta);
-          placePart(PARTS.bucket, bucketPivot, bucketDelta);
+          // Parts are positioned in stage (world) coordinates rather than
+          // nested DOM elements, so child rotations must explicitly inherit
+          // every parent rotation to preserve each joint's relative angle.
+          const boomRotation = boomDelta;
+          const stickRotation = boomRotation + stickDelta;
+          const bucketRotation = stickRotation + bucketDelta;
 
-          placeLabel(
-            PARTS.boom.label,
-            boomPivot,
-            PARTS.boom.labelOffset,
-            state.boom
+          const boomPivot = { x: 116, y: 258 };
+          const stickPivot = placePart(PARTS.boom, boomPivot, boomRotation);
+          const bucketPivot = placePart(PARTS.stick, stickPivot, stickRotation);
+          const bucketTip = placePart(
+            PARTS.bucket,
+            bucketPivot,
+            bucketRotation
           );
+          placeLabel(PARTS.boom.label, state.boom);
           placeLabel(
             PARTS.stick.label,
-            stickPivot,
-            PARTS.stick.labelOffset,
-            state.stick
+            getDisplayAngle("stick", state.stick)
           );
           placeLabel(
             PARTS.bucket.label,
-            bucketPivot,
-            PARTS.bucket.labelOffset,
-            state.bucket
+            getDisplayAngle("bucket", state.bucket)
           );
+          drawMeasurements({ boomPivot, stickPivot, bucketPivot, bucketTip });
         }
 
         function readAngle(data, keys, fallback) {
           for (const key of keys) {
             const value = Number(data && data[key]);
             if (Number.isFinite(value)) return sanitizeAngle(fallback.key, value);
+          }
+          return fallback.value;
+        }
+
+        function readComplementaryAngle(data, keys, fallback) {
+          for (const key of keys) {
+            const value = Number(data && data[key]);
+            if (Number.isFinite(value)) {
+              return sanitizeAngle(fallback.key, 180 - value);
+            }
           }
           return fallback.value;
         }
@@ -368,10 +474,11 @@
 
           if (payload && payload.joints) {
             const joints = payload.joints;
+
             return {
-              boom: readJointZ(joints.boom),
-              stick: readJointZ(joints.stick),
-              bucket: readJointZ(joints.bucket),
+              boom: joints.boom && joints.boom.z,
+              stick: joints.stick && joints.stick.z,
+              bucket: joints.bucket && joints.bucket.z,
             };
           }
 
@@ -380,7 +487,12 @@
         }
 
         function updateExcavatorAngles(payload) {
-          const data = normalizePayload(payload);
+          // 这里搞一个小转换
+          const changeAllAngle = Object.entries(payload).reduce((prev, cur, index) => {
+              prev[cur[0]] = (cur[0] === 'stick' || cur[0] === 'bucket') ? Math.abs(cur[1]) : cur[1]
+              return prev;
+          }, {});
+          const data = normalizePayload(changeAllAngle);
 
           state.boom = readAngle(
             data,
@@ -392,7 +504,7 @@
             ["stick", "stickAngle", "smallArm", "smallArmAngle"],
             { key: "stick", value: state.stick }
           );
-          state.bucket = readAngle(
+          state.bucket = readComplementaryAngle(
             data,
             ["bucket", "bucketAngle"],
             { key: "bucket", value: state.bucket }
@@ -412,8 +524,6 @@
             const output = document.getElementById(`${key}Output`);
             if (!input || !output) continue;
 
-            input.value =
-              key === "stick" ? stickAngleToDebugProgress(state[key]) : state[key];
             output.textContent = `${state[key].toFixed(2)}°`;
           }
         }
@@ -433,6 +543,7 @@
                 key === "stick"
                   ? stickDebugProgressToAngle(progressValue)
                   : progressValue;
+
               output.textContent = `${nextValue.toFixed(2)}°`;
               updateExcavatorAngles({ [key]: nextValue });
             });

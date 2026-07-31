@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { GUI } from "three/addons/libs/lil-gui.module.min.js";
+import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
 
 const app = document.getElementById("app");
 const isDevPanelEnabled = new URLSearchParams(window.location.search).get("dev") === "1";
@@ -212,8 +213,8 @@ function degToRad(value) {
 // so values remain continuous when they cross the +/-180 boundary.
 const IMU_CONFIG = {
   boom:   { sign: -1 },
-  stick:  { inputStart: -171.66, outputStart: 96, sign: 1 },
-  bucket: { inputStart: 70, outputStart: 20, sign: -1, scale: 33 / (60 - 35.14) }
+  stick:  { sign: -1, inputStart: -130, outputStart: 150 },
+  bucket: { sign: -1, inputStart: 90, outputStart: 220 }
   // 35.15,但是这里偏差应该稍微大一点的
 };
 
@@ -410,6 +411,7 @@ function applyStateToModel() {
 }
 
 const loader = new GLTFLoader();
+loader.setMeshoptDecoder(MeshoptDecoder);
 loader.load(
   "./model/excavator.glb",
   (gltf) => {
