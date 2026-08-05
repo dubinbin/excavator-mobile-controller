@@ -2,6 +2,53 @@ plugins {
     id 'com.android.application'
 }
 
+def webProjectDir = rootProject.layout.projectDirectory
+        .dir('web/excavator-web-app')
+        .asFile
+def webDistDir = new File(webProjectDir, 'dist')
+def generatedWebAssetsDir = layout.buildDirectory
+        .dir('generated/webAssets/bundledWeb')
+        .get()
+        .asFile
+def npmCommand = System.getProperty('os.name').toLowerCase().contains('windows')
+        ? 'npm.cmd'
+        : 'npm'
+
+def installExcavatorWebDependencies = tasks.register(
+        'installExcavatorWebDependencies',
+        Exec
+) {
+    group = 'web app'
+    description = 'Installs the embedded excavator web app dependencies.'
+    workingDir webProjectDir
+    commandLine npmCommand, 'ci'
+    inputs.files(
+            new File(webProjectDir, 'package.json'),
+            new File(webProjectDir, 'package-lock.json')
+    )
+    outputs.file(new File(webProjectDir, 'node_modules/.package-lock.json'))
+}
+
+def buildExcavatorWeb = tasks.register('buildExcavatorWeb', Exec) {
+    group = 'web app'
+    description = 'Builds deterministic web assets without changing package versions.'
+    dependsOn installExcavatorWebDependencies
+    workingDir webProjectDir
+    commandLine npmCommand, 'run', 'build:android'
+    inputs.files(fileTree(webProjectDir) {
+        exclude '.git/**', '.vscode/**', 'dist/**', 'node_modules/**'
+    })
+    outputs.dir webDistDir
+}
+
+def syncExcavatorWebAssets = tasks.register('syncExcavatorWebAssets', Sync) {
+    group = 'web app'
+    description = 'Copies the web build into the generated Android assets directory.'
+    dependsOn buildExcavatorWeb
+    from webDistDir
+    into new File(generatedWebAssetsDir, 'web/excavator-web-app')
+}
+
 android {
     // AGP 8+ 要求在 build.gradle 中显式声明 namespace，对应 AndroidManifest.xml 的 package
     namespace 'com.capstone.excavator'
@@ -29,15 +76,32 @@ android {
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
     }
 
+    flavorDimensions += 'webContent'
+    productFlavors {
+        devWeb {
+            dimension 'webContent'
+            buildConfigField 'String', 'WEB_APP_BASE_URL', '"http://127.0.0.1:5173/"'
+            buildConfigField 'boolean', 'USE_DEV_WEB_SERVER', 'true'
+        }
+        bundledWeb {
+            dimension 'webContent'
+            buildConfigField 'String', 'WEB_APP_BASE_URL', '"https://appassets.androidplatform.net/assets/web/excavator-web-app/index.html"'
+            buildConfigField 'boolean', 'USE_DEV_WEB_SERVER', 'false'
+        }
+    }
+
+    sourceSets {
+        bundledWeb {
+            assets.srcDir generatedWebAssetsDir
+        }
+    }
+
     buildTypes {
-        // Debug：AGP 自动用 ~/.android/debug.keystore 签名，可直接安装。
-        //   ./gradlew :app:assembleDebug
-        //   输出：app/build/outputs/apk/debug/app-debug.apk
+        // Debug：devWebDebug 连接 Vite；bundledWebDebug 打包 Web 产物。
         debug {
             debuggable true
         }
-        // Release：未配置 signingConfigs 时只会生成 app-release-unsigned.apk，系统拒绝安装。
-        // 内测可先用 assembleDebug；正式 release 需 keystore + signingConfigs.release。
+        // Release：只允许 bundledWebRelease。未配置签名时生成的 APK 无法直接安装。
         release {
             debuggable false
             minifyEnabled false
@@ -48,6 +112,23 @@ android {
         // 保持 Java 8 语法级别，JDK 可以使用 11/17 甚至更高
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8
+    }
+}
+
+androidComponents {
+    beforeVariants(selector().withBuildType('release')) { variantBuilder ->
+        if (variantBuilder.productFlavors.any { it.second == 'devWeb' }) {
+            variantBuilder.enable = false
+        }
+    }
+}
+
+tasks.configureEach { task ->
+    // Every task in a bundled variant may inspect its complete source set (lint model writers do
+    // this as well as mergeAssets). Make the generated-assets producer explicit for Gradle's task
+    // validation instead of relying on execution order.
+    if (task.name.contains('BundledWeb')) {
+        task.dependsOn syncExcavatorWebAssets
     }
 }
 
@@ -74,4 +155,3 @@ dependencies {
     androidTestImplementation 'androidx.test.ext:junit:1.1.5'
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'
 }
-

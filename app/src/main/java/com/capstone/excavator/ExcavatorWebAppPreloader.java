@@ -57,6 +57,12 @@ final class ExcavatorWebAppPreloader {
 
     @Nullable
     static ExcavatorWebAppPreloader preload(Activity activity) {
+        // Vite development mode owns freshness through HMR. The packaged index may not exist in
+        // this variant and must not be used to decide whether a remote development page is fresh.
+        if (BuildConfig.USE_DEV_WEB_SERVER) {
+            return null;
+        }
+
         String version = readAssetVersion(activity);
         if (version == null || version.isEmpty()) {
             Log.w(TAG, "skip preload: version meta not found");
