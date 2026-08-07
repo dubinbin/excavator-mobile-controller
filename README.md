@@ -102,11 +102,13 @@ WebView 固定访问 `127.0.0.1:5173`，因此不需要修改 Java 代码或提�
 devWebDebug
 ```
 
-也可以使用命令行构建并安装：
+也可以使用命令行构建并安装：在项目根目录执行
 
 ```bash
 ./gradlew :app:installDevWebDebug
 ```
+
+手动进入app的设置页或其他页面查看效果，此时web页面是reactive的，可以直接编辑web/excavator-web-app 项目即可
 
 开发变体依赖正在运行的 Vite 服务。如果显示空白页，依次检查：
 
